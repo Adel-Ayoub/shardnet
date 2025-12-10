@@ -1,0 +1,39 @@
+# Zig build output
+.zig-cache/
+zig-cache/
+zig-out/
+
+# Compiled objects and libraries
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# XDP / BPF objects
+*.bpf.o
+xdp_kern.o
+
+# Editor and OS
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs and profiling
+*.log
+perf.data
+perf.data.old
+
+# Secrets and environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Test artifacts
+/coverage/
