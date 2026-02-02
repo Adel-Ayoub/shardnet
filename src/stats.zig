@@ -1,16 +1,10 @@
-/// Runtime statistics counters for the shardnet network stack.
-///
-/// All counters use `std.atomic.Value(u64)` so they can be updated from
-/// multiple threads (e.g. Rx and Tx paths) without requiring a mutex.
-/// A point-in-time `Snapshot` can be captured for logging or metrics
-/// export without blocking the data path.
+/// Runtime statistics with atomic counters for thread-safe Rx/Tx updates.
+/// Capture point-in-time Snapshot for logging or Prometheus export.
 const std = @import("std");
 
 const Atomic = std.atomic.Value;
 
-// ---------------------------------------------------------------------------
 // Atomic helpers
-// ---------------------------------------------------------------------------
 
 fn atomicInc(counter: *Atomic(u64)) void {
     _ = counter.fetchAdd(1, .monotonic);
@@ -28,12 +22,7 @@ fn atomicStore(counter: *Atomic(u64), value: u64) void {
     counter.store(value, .monotonic);
 }
 
-// ---------------------------------------------------------------------------
-// Per-direction byte and packet counters
-// ---------------------------------------------------------------------------
-
-/// Directional counters shared by all interfaces and protocol layers.
-/// Thread-safe via atomics — no lock required on the hot path.
+// Direction counters (atomic, lock-free)
 pub const DirectionStats = struct {
     rx_bytes: Atomic(u64) = Atomic(u64).init(0),
     tx_bytes: Atomic(u64) = Atomic(u64).init(0),
@@ -70,12 +59,7 @@ pub const DirectionStats = struct {
     }
 };
 
-// ---------------------------------------------------------------------------
-// Snapshot — point-in-time copy of all counters
-// ---------------------------------------------------------------------------
-
-/// An immutable copy of all counters captured at a single instant.
-/// Useful for periodic logging, Prometheus scrapes, or delta computation.
+// Snapshot — immutable copy for logging or export
 pub const Snapshot = struct {
     ip: IPStatsSnapshot,
     tcp: TCPStatsSnapshot,
@@ -130,9 +114,7 @@ pub const LinkStatsSnapshot = struct {
     tx_errors: u64,
 };
 
-// ---------------------------------------------------------------------------
-// Protocol-level stat structs (atomic)
-// ---------------------------------------------------------------------------
+// Protocol-level stats (atomic)
 
 pub const IPStats = struct {
     rx_packets: Atomic(u64) = Atomic(u64).init(0),
@@ -312,9 +294,7 @@ pub const LinkStats = struct {
     }
 };
 
-// ---------------------------------------------------------------------------
 // Latency tracking
-// ---------------------------------------------------------------------------
 
 pub const LatencyMetric = struct {
     count: u64 = 0,
@@ -362,9 +342,7 @@ pub const LatencyStats = struct {
     }
 };
 
-// ---------------------------------------------------------------------------
 // Aggregate stack stats
-// ---------------------------------------------------------------------------
 
 pub const StackStats = struct {
     ip: IPStats = .{},
@@ -411,7 +389,7 @@ pub const StackStats = struct {
 
     pub fn dump(self: *const StackStats) void {
         const s = self.snapshot();
-        std.debug.print("\n--- ustack Statistics ---\n", .{});
+        std.debug.print("\n--- Stack Statistics ---\n", .{});
         std.debug.print("IP:\n", .{});
         std.debug.print("  Rx: {d}, Tx: {d}, Dropped: {d}\n", .{ s.ip.rx_packets, s.ip.tx_packets, s.ip.dropped_packets });
         std.debug.print("ARP:\n", .{});
@@ -424,11 +402,79 @@ pub const StackStats = struct {
         std.debug.print("-------------------------\n", .{});
         self.latency.dump();
     }
+
+    /// Write all counters in Prometheus exposition format.
+    pub fn format(self: *const StackStats, writer: anytype, iface: []const u8) !void {
+        const s = self.snapshot();
+        const label = if (iface.len > 0) iface else "default";
+
+        // IP metrics
+        try writer.print("net_ip_rx_packets_total{{iface=\"{s}\"}} {d}\n", .{ label, s.ip.rx_packets });
+        try writer.print("net_ip_tx_packets_total{{iface=\"{s}\"}} {d}\n", .{ label, s.ip.tx_packets });
+        try writer.print("net_ip_dropped_packets_total{{iface=\"{s}\"}} {d}\n", .{ label, s.ip.dropped_packets });
+        try writer.print("net_ip_invalid_checksum_total{{iface=\"{s}\"}} {d}\n", .{ label, s.ip.invalid_checksum });
+        try writer.print("net_ip_no_route_total{{iface=\"{s}\"}} {d}\n", .{ label, s.ip.no_route });
+
+        // TCP metrics
+        try writer.print("net_tcp_rx_segments_total{{iface=\"{s}\"}} {d}\n", .{ label, s.tcp.rx_segments });
+        try writer.print("net_tcp_tx_segments_total{{iface=\"{s}\"}} {d}\n", .{ label, s.tcp.tx_segments });
+        try writer.print("net_tcp_retransmits_total{{iface=\"{s}\"}} {d}\n", .{ label, s.tcp.retransmits });
+        try writer.print("net_tcp_active_opens_total{{iface=\"{s}\"}} {d}\n", .{ label, s.tcp.active_opens });
+        try writer.print("net_tcp_passive_opens_total{{iface=\"{s}\"}} {d}\n", .{ label, s.tcp.passive_opens });
+        try writer.print("net_tcp_failed_connections_total{{iface=\"{s}\"}} {d}\n", .{ label, s.tcp.failed_connections });
+        try writer.print("net_tcp_established{{iface=\"{s}\"}} {d}\n", .{ label, s.tcp.established });
+        try writer.print("net_tcp_resets_sent_total{{iface=\"{s}\"}} {d}\n", .{ label, s.tcp.resets_sent });
+        try writer.print("net_tcp_resets_received_total{{iface=\"{s}\"}} {d}\n", .{ label, s.tcp.resets_received });
+
+        // ARP metrics
+        try writer.print("net_arp_rx_requests_total{{iface=\"{s}\"}} {d}\n", .{ label, s.arp.rx_requests });
+        try writer.print("net_arp_rx_replies_total{{iface=\"{s}\"}} {d}\n", .{ label, s.arp.rx_replies });
+        try writer.print("net_arp_tx_requests_total{{iface=\"{s}\"}} {d}\n", .{ label, s.arp.tx_requests });
+        try writer.print("net_arp_tx_replies_total{{iface=\"{s}\"}} {d}\n", .{ label, s.arp.tx_replies });
+
+        // Direction metrics
+        try writer.print("net_rx_bytes_total{{iface=\"{s}\"}} {d}\n", .{ label, s.direction.rx_bytes });
+        try writer.print("net_tx_bytes_total{{iface=\"{s}\"}} {d}\n", .{ label, s.direction.tx_bytes });
+        try writer.print("net_rx_packets_total{{iface=\"{s}\"}} {d}\n", .{ label, s.direction.rx_packets });
+        try writer.print("net_tx_packets_total{{iface=\"{s}\"}} {d}\n", .{ label, s.direction.tx_packets });
+        try writer.print("net_rx_drops_total{{iface=\"{s}\"}} {d}\n", .{ label, s.direction.rx_drops });
+        try writer.print("net_tx_drops_total{{iface=\"{s}\"}} {d}\n", .{ label, s.direction.tx_drops });
+    }
 };
 
-// ---------------------------------------------------------------------------
+// Per-interface stats
+
+pub const InterfaceStats = struct {
+    name: [16]u8 = [_]u8{0} ** 16,
+    name_len: u8 = 0,
+    link: LinkStats = .{},
+    direction: DirectionStats = .{},
+
+    pub fn setName(self: *InterfaceStats, iface: []const u8) void {
+        const len = @min(iface.len, 16);
+        @memcpy(self.name[0..len], iface[0..len]);
+        self.name_len = @intCast(len);
+    }
+
+    pub fn getName(self: *const InterfaceStats) []const u8 {
+        return self.name[0..self.name_len];
+    }
+
+    pub fn format(self: *const InterfaceStats, writer: anytype) !void {
+        const label = self.getName();
+        const s = self.link.snapshot();
+
+        try writer.print("net_link_rx_packets_total{{iface=\"{s}\"}} {d}\n", .{ label, s.rx_packets });
+        try writer.print("net_link_tx_packets_total{{iface=\"{s}\"}} {d}\n", .{ label, s.tx_packets });
+        try writer.print("net_link_rx_bytes_total{{iface=\"{s}\"}} {d}\n", .{ label, s.rx_bytes });
+        try writer.print("net_link_tx_bytes_total{{iface=\"{s}\"}} {d}\n", .{ label, s.tx_bytes });
+        try writer.print("net_link_rx_errors_total{{iface=\"{s}\"}} {d}\n", .{ label, s.rx_errors });
+        try writer.print("net_link_tx_errors_total{{iface=\"{s}\"}} {d}\n", .{ label, s.tx_errors });
+    }
+};
+
 // Globals
-// ---------------------------------------------------------------------------
 
 pub var global_stats: StackStats = .{};
 pub var global_link_stats: LinkStats = .{};
+pub var interface_stats: [8]InterfaceStats = [_]InterfaceStats{.{}} ** 8;
