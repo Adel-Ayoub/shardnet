@@ -1,71 +1,61 @@
-/// Shared utility functions for the shardnet network stack.
-///
-/// Provides the RFC 1071 ones-complement checksum used by IP, TCP, and UDP,
-/// alignment helpers, a power-of-two modular ring index, and human-readable
-/// formatting helpers for MAC and IPv4 addresses.
+/// RFC 1071 checksum, alignment helpers, ring index, and formatting utilities.
 const std = @import("std");
 const tcpip = @import("tcpip.zig");
 
-// ---------------------------------------------------------------------------
 // RFC 1071 Internet Checksum
-// ---------------------------------------------------------------------------
 
-/// Compute the RFC 1071 ones-complement checksum over `data`.
-///
-/// The checksum is the 16-bit ones-complement of the ones-complement sum
-/// of all 16-bit words in the data. A trailing odd byte, if present, is
-/// padded with a zero byte for the final addition.
-///
-/// Returns the checksum in network byte order (big-endian), ready to be
-/// inserted directly into the packet header.
+/// RFC 1071 ones-complement checksum. Returns big-endian result.
+// PERF: Uses 32-bit word accumulation with single carry-fold at end.
 pub fn checksum(data: []const u8) u16 {
-    var sum: u32 = 0;
+    var sum: u64 = 0;
     var i: usize = 0;
 
-    // Accumulate 16-bit words.
-    while (i + 1 < data.len) : (i += 2) {
+    // Accumulate 32-bit words for better throughput.
+    while (i + 3 < data.len) : (i += 4) {
+        const word: u32 = @as(u32, data[i]) << 24 |
+            @as(u32, data[i + 1]) << 16 |
+            @as(u32, data[i + 2]) << 8 |
+            @as(u32, data[i + 3]);
+        sum += word;
+    }
+
+    // Handle remaining 16-bit word.
+    if (i + 1 < data.len) {
         const word: u16 = @as(u16, data[i]) << 8 | @as(u16, data[i + 1]);
         sum += word;
+        i += 2;
     }
 
     // Handle trailing odd byte.
     if (i < data.len) {
-        sum += @as(u32, data[i]) << 8;
+        sum += @as(u64, data[i]) << 8;
     }
 
-    // Fold 32-bit sum into 16 bits.
-    while (sum >> 16 != 0) {
-        sum = (sum & 0xFFFF) + (sum >> 16);
-    }
+    // Single fold: reduce 64-bit to 16-bit.
+    sum = (sum >> 32) + (sum & 0xFFFFFFFF);
+    sum = (sum >> 16) + (sum & 0xFFFF);
+    sum = (sum >> 16) + (sum & 0xFFFF);
 
     return @intCast(~sum & 0xFFFF);
 }
 
-// ---------------------------------------------------------------------------
 // Alignment helpers
-// ---------------------------------------------------------------------------
 
-/// Round `value` up to the next multiple of `alignment`.
-/// `alignment` must be a power of two.
+/// Round up to next multiple of alignment (must be power of two).
 pub fn align_up(value: usize, alignment: usize) usize {
     std.debug.assert(alignment > 0 and (alignment & (alignment - 1)) == 0);
     return (value + alignment - 1) & ~(alignment - 1);
 }
 
-/// Round `value` down to the previous multiple of `alignment`.
-/// `alignment` must be a power of two.
+/// Round down to previous multiple of alignment (must be power of two).
 pub fn align_down(value: usize, alignment: usize) usize {
     std.debug.assert(alignment > 0 and (alignment & (alignment - 1)) == 0);
     return value & ~(alignment - 1);
 }
 
-// ---------------------------------------------------------------------------
-// RingIndex — power-of-two modular index for buffer rings
-// ---------------------------------------------------------------------------
+// RingIndex — power-of-two modular index
 
-/// A modular index that wraps at a power-of-two boundary. Used by ring
-/// buffers to implement cheap wrap-around with a bitmask instead of the
-/// modulo operator.
+/// Modular index with bitmask wrap-around (cheaper than modulo).
 pub fn RingIndex(comptime capacity: u32) type {
     comptime std.debug.assert(capacity > 0 and (capacity & (capacity - 1)) == 0);
 
@@ -99,12 +89,9 @@ pub fn RingIndex(comptime capacity: u32) type {
     };
 }
 
-// ---------------------------------------------------------------------------
 // Formatting helpers
-// ---------------------------------------------------------------------------
 
-/// Format a 6-byte MAC address as "aa:bb:cc:dd:ee:ff" into the provided buffer.
-/// Returns the formatted slice.
+/// Format MAC address as "aa:bb:cc:dd:ee:ff".
 pub fn mac_to_string(mac: [6]u8, buf: *[17]u8) []const u8 {
     const hex = "0123456789abcdef";
     var i: usize = 0;
@@ -120,8 +107,7 @@ pub fn mac_to_string(mac: [6]u8, buf: *[17]u8) []const u8 {
     return buf[0..17];
 }
 
-/// Format a 4-byte IPv4 address as "a.b.c.d" into the provided buffer.
-/// Returns the formatted slice (length varies from 7 to 15 characters).
+/// Format IPv4 address as "a.b.c.d".
 pub fn ip4_to_string(addr: [4]u8, buf: *[15]u8) []const u8 {
     var stream = std.io.fixedBufferStream(buf);
     const writer = stream.writer();
@@ -129,12 +115,9 @@ pub fn ip4_to_string(addr: [4]u8, buf: *[15]u8) []const u8 {
     return stream.getWritten();
 }
 
-// ---------------------------------------------------------------------------
-// IP address parsing (delegates to std.net where possible)
-// ---------------------------------------------------------------------------
+// IP address parsing
 
-/// Parse a human-readable IP address string into an Address.
-/// Supports both IPv4 dotted-decimal and IPv6 colon-hex notation.
+/// Parse IPv4 or IPv6 address string.
 pub fn parseIp(str: []const u8) !tcpip.Address {
     if (std.mem.indexOf(u8, str, ":") != null) {
         var out: [16]u8 = undefined;
@@ -176,9 +159,7 @@ pub fn parseCidr(str: []const u8) !Cidr {
     };
 }
 
-// ---------------------------------------------------------------------------
 // Tests
-// ---------------------------------------------------------------------------
 
 test "checksum: RFC 1071 Section 3 test vector" {
     // Example from RFC 1071: 0x0001 + 0xf203 + ... = expected result.
