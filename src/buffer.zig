@@ -1,21 +1,5 @@
-/// Zero-copy packet buffer system for the shardnet network stack.
-///
-/// Provides ref-counted Clusters (fixed-size buffers), a ClusterPool slab
-/// allocator that pre-warms buffers to avoid per-packet heap allocation on
-/// the hot path, and a VectorisedView that represents a packet as a chain
-/// of non-contiguous buffer slices.
-///
-/// Ownership and lifetime contract:
-///   - A Cluster's lifetime is managed by its reference count.
-///     acquire() increments, release() decrements. When the count reaches
-///     zero the cluster is returned to its originating pool.
-///   - The Pool / ClusterPool owns the backing memory. Callers receive
-///     pointers that are valid until the pool is deinitialized.
-///   - VectorisedView.deinit() releases all referenced clusters and frees
-///     the view metadata array. The caller must not use the view after
-///     deinit.
-// NOTE: All pool operations are single-threaded. If multi-threaded Rx/Tx
-// is needed, wrap acquire/release in a mutex or use per-thread pools.
+/// Zero-copy packet buffer system with ref-counted clusters and slab allocation.
+// NOTE: All pool operations are single-threaded. Use per-thread pools for concurrent Rx/Tx.
 const std = @import("std");
 const header = @import("header.zig");
 const stats = @import("stats.zig");
@@ -33,6 +17,8 @@ pub const Cluster = struct {
     }
 
     pub fn release(self: *Cluster) void {
+        // SAFETY: Cluster must belong to a valid pool.
+        std.debug.assert(self.pool != undefined);
         self.ref_count -= 1;
         if (self.ref_count == 0) {
             self.pool.returnToPool(self);
@@ -51,6 +37,10 @@ pub const ClusterPool = struct {
     allocator: Allocator,
     free_list: ?*Cluster = null,
     count: usize = 0,
+    total_acquires: u64 = 0,
+    total_releases: u64 = 0,
+    allocated: usize = 0,
+    peak_allocated: usize = 0,
 
     pub fn init(allocator: Allocator) ClusterPool {
         return .{
@@ -85,6 +75,12 @@ pub const ClusterPool = struct {
     }
 
     pub fn acquire(self: *ClusterPool) !*Cluster {
+        self.total_acquires += 1;
+        self.allocated += 1;
+        if (self.allocated > self.peak_allocated) {
+            self.peak_allocated = self.allocated;
+        }
+
         if (self.free_list) |c| {
             self.free_list = c.next;
             if (self.count > 0) self.count -= 1;
@@ -104,28 +100,35 @@ pub const ClusterPool = struct {
     }
 
     pub fn returnToPool(self: *ClusterPool, cluster: *Cluster) void {
+        // SAFETY: Cluster must belong to this pool.
+        std.debug.assert(cluster.pool == self);
+
+        self.total_releases += 1;
+        if (self.allocated > 0) self.allocated -= 1;
+
+        // Debug poison pattern to catch use-after-free.
+        if (std.debug.runtime_safety) {
+            @memset(&cluster.data, 0xDE);
+        }
+
         cluster.next = self.free_list;
         self.free_list = cluster;
         self.count += 1;
     }
 
-    /// Snapshot of pool utilisation for monitoring and diagnostics.
     pub const PoolStats = struct {
-        /// Number of clusters currently in the free list.
+        allocated: usize,
         free: usize,
-        /// Total acquire() calls since pool creation.
+        peak_allocated: usize,
         total_acquires: u64,
-        /// Total release() calls since pool creation.
         total_releases: u64,
     };
 
-    total_acquires: u64 = 0,
-    total_releases: u64 = 0,
-
-    /// Return a point-in-time snapshot of pool utilisation.
     pub fn poolStats(self: *const ClusterPool) PoolStats {
         return .{
+            .allocated = self.allocated,
             .free = self.count,
+            .peak_allocated = self.peak_allocated,
             .total_acquires = self.total_acquires,
             .total_releases = self.total_releases,
         };
