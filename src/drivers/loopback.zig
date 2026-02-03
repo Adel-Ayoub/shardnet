@@ -194,6 +194,13 @@ pub const Loopback = struct {
     /// original buffer immediately after this call returns. If loss
     /// simulation is enabled and the PRNG decides to drop this packet,
     /// the clone is skipped entirely to save work.
+    ///
+    /// NOTE: The clone() call is critical for preventing a race condition where
+    /// the caller releases the original buffer back to the pool before tick()
+    /// delivers it to the receive handler. Without cloning, the buffer memory
+    /// could be overwritten by a subsequent send while the receiver is still
+    /// reading from it. This copy-on-loopback semantic ensures each queued
+    /// packet owns its data exclusively until delivery completes.
     pub fn writePacket(ptr: *anyopaque, r: ?*const stack.Route, protocol: tcpip.NetworkProtocolNumber, pkt: tcpip.PacketBuffer) tcpip.Error!void {
         const self: *Loopback = @ptrCast(@alignCast(ptr));
         _ = r;
@@ -252,6 +259,10 @@ pub const Loopback = struct {
             }
             self.loopback_rx += 1;
 
+            // NOTE: The cloned packet's VectorisedView must be released after the
+            // dispatcher has finished reading, ensuring the buffer cannot be reused
+            // until the receive handler completes. This completes the buffer safety
+            // guarantee established by the clone() in writePacket().
             node.data.pkt.data.deinit();
             // PERF: Return the node to the pool rather than freeing it,
             // keeping the next writePacket allocation off the heap.
