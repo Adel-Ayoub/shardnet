@@ -17,6 +17,12 @@ pub const ProtocolNumber = 0x0800;
 pub const DEFAULT_TTL: u8 = 64;
 
 /// Maximum time to hold reassembly fragments before expiry (30 seconds).
+///
+/// RFC 791 Section 3.2 mandates that reassembly resources MUST be reclaimed
+/// if the complete datagram is not received within a reasonable time limit.
+/// The RFC suggests a lower bound of 15 seconds; we use 30 seconds as a
+/// conservative default that tolerates moderate path delays while still
+/// preventing memory exhaustion from fragment floods.
 pub const REASSEMBLY_TIMEOUT_MS: i64 = 30_000;
 
 /// IP option types for options parsing.
@@ -432,6 +438,13 @@ pub const IPv4Endpoint = struct {
         }
     }
 
+    /// Expire stale reassembly contexts that have exceeded REASSEMBLY_TIMEOUT_MS.
+    ///
+    /// NOTE: Per RFC 791, incomplete datagrams MUST be discarded after a timeout
+    /// to prevent memory exhaustion from fragment flood attacks or lost fragments.
+    /// When a context expires, all its buffered fragments are released and an
+    /// ICMP Time Exceeded (code 1: fragment reassembly time exceeded) SHOULD be
+    /// sent to the source. We currently drop silently to avoid amplification.
     fn expireReassemblyContexts(self: *IPv4Endpoint) void {
         var to_remove = std.ArrayList(ReassemblyKey).init(self.nic.stack.allocator);
         defer to_remove.deinit();
@@ -439,6 +452,10 @@ pub const IPv4Endpoint = struct {
         var it = self.reassembly_list.iterator();
         while (it.next()) |entry| {
             if (entry.value_ptr.isExpired()) {
+                log.debug("IPv4: Expiring stale fragment reassembly (id={}, src={any})", .{
+                    entry.key_ptr.id,
+                    entry.key_ptr.src.v4,
+                });
                 to_remove.append(entry.key_ptr.*) catch continue;
             }
         }
