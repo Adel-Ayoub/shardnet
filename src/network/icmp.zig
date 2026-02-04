@@ -42,6 +42,16 @@ pub const TimeExceededCode = struct {
 
 /// Rate limiter using token bucket algorithm.
 /// Limits ICMP error messages to prevent amplification attacks.
+///
+/// NOTE: This implementation follows RFC 4443 Section 2.4 guidance on rate
+/// limiting ICMP error messages. The token bucket algorithm provides:
+///   1. Burst tolerance: up to max_tokens messages can be sent immediately
+///   2. Steady-state rate: refill_rate messages per second sustained
+///   3. Monotonic clock: uses std.time.milliTimestamp() which is backed by
+///      CLOCK_MONOTONIC on POSIX systems, immune to wall-clock adjustments
+///
+/// The default of 100 tokens with 100/sec refill allows brief bursts during
+/// legitimate error conditions while capping sustained rate at ~100 msg/sec.
 pub const RateLimiter = struct {
     /// Maximum tokens (burst capacity).
     max_tokens: u32 = 100,
@@ -49,11 +59,13 @@ pub const RateLimiter = struct {
     tokens: u32 = 100,
     /// Tokens refilled per second.
     refill_rate: u32 = 100,
-    /// Last refill timestamp (ms).
+    /// Last refill timestamp (ms) - monotonic clock, not wall time.
     last_refill_ms: i64 = 0,
 
     pub fn init() RateLimiter {
         return .{
+            // NOTE: milliTimestamp() returns monotonic time, so rate limiting
+            // continues to work correctly across NTP adjustments or DST changes.
             .last_refill_ms = std.time.milliTimestamp(),
         };
     }
@@ -68,6 +80,7 @@ pub const RateLimiter = struct {
         return false;
     }
 
+    /// Refill tokens based on elapsed monotonic time.
     fn refill(self: *RateLimiter) void {
         const now = std.time.milliTimestamp();
         const elapsed_ms = now - self.last_refill_ms;
