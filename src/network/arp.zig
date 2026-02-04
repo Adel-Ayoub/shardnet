@@ -10,6 +10,7 @@ const header = @import("../header.zig");
 const buffer = @import("../buffer.zig");
 const time = @import("../time.zig");
 const stats = @import("../stats.zig");
+const log = @import("../log.zig").scoped(.arp);
 
 pub const ProtocolNumber = 0x0806;
 pub const ProtocolAddress = "arp";
@@ -45,6 +46,20 @@ const PROBE_COUNT = 3;
 /// RFC 5227: Delay between probes in milliseconds.
 const PROBE_INTERVAL_MS = 1000;
 
+/// Policy for handling ARP cache updates that change an existing mapping.
+///
+/// ARP spoofing/poisoning attacks work by sending unsolicited ARP replies
+/// that overwrite legitimate mappings. This policy controls how the stack
+/// responds when an incoming ARP packet would change an existing entry.
+pub const CacheUpdatePolicy = enum {
+    /// Accept all updates (original behaviour, vulnerable to spoofing).
+    accept,
+    /// Reject updates that change MAC for an existing IP (paranoid mode).
+    reject,
+    /// Accept but log a warning (recommended for production monitoring).
+    alert,
+};
+
 pub const ARPProtocol = struct {
     /// ARP cache: IPv4 address -> CacheEntry.
     /// NOTE: Cache eviction uses LRU policy. When the cache is full, the oldest
@@ -52,11 +67,23 @@ pub const ARPProtocol = struct {
     /// rather than eagerly, reducing background traffic.
     cache: std.AutoHashMap(tcpip.Address, CacheEntry),
     allocator: std.mem.Allocator,
+    /// Policy for handling cache updates that would change an existing mapping.
+    /// Defaults to .alert which logs potential spoofing but allows the update.
+    update_policy: CacheUpdatePolicy = .alert,
 
     pub fn init(allocator: std.mem.Allocator) ARPProtocol {
         return .{
             .cache = std.AutoHashMap(tcpip.Address, CacheEntry).init(allocator),
             .allocator = allocator,
+        };
+    }
+
+    /// Initialise with explicit cache update policy.
+    pub fn initWithPolicy(allocator: std.mem.Allocator, policy: CacheUpdatePolicy) ARPProtocol {
+        return .{
+            .cache = std.AutoHashMap(tcpip.Address, CacheEntry).init(allocator),
+            .allocator = allocator,
+            .update_policy = policy,
         };
     }
 
@@ -80,7 +107,45 @@ pub const ARPProtocol = struct {
     }
 
     /// Add or update a cache entry.
+    ///
+    /// When an entry already exists with a different MAC address, the
+    /// configured `update_policy` determines behaviour:
+    ///   - accept: silently overwrite (vulnerable to ARP spoofing)
+    ///   - reject: keep original mapping, ignore the new one
+    ///   - alert:  log a warning and then overwrite (recommended)
+    ///
+    /// NOTE: Frequent MAC changes for the same IP may indicate:
+    ///   1. ARP spoofing attack (malicious)
+    ///   2. VRRP/HSRP failover (legitimate)
+    ///   3. VM migration (legitimate)
+    /// Operators should tune the policy based on their environment.
     pub fn updateCache(self: *ARPProtocol, addr: tcpip.Address, mac: [6]u8) void {
+        // Check for existing entry with different MAC (potential spoofing)
+        if (self.cache.get(addr)) |existing| {
+            if (!std.mem.eql(u8, &existing.mac, &mac)) {
+                switch (self.update_policy) {
+                    .reject => {
+                        log.warn("ARP: Rejecting MAC change for {any}: {x}:{x}:{x}:{x}:{x}:{x} -> {x}:{x}:{x}:{x}:{x}:{x} (policy=reject)", .{
+                            addr.v4,
+                            existing.mac[0], existing.mac[1], existing.mac[2],
+                            existing.mac[3], existing.mac[4], existing.mac[5],
+                            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+                        });
+                        return;
+                    },
+                    .alert => {
+                        log.warn("ARP: MAC changed for {any}: {x}:{x}:{x}:{x}:{x}:{x} -> {x}:{x}:{x}:{x}:{x}:{x} (possible spoofing)", .{
+                            addr.v4,
+                            existing.mac[0], existing.mac[1], existing.mac[2],
+                            existing.mac[3], existing.mac[4], existing.mac[5],
+                            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+                        });
+                    },
+                    .accept => {},
+                }
+            }
+        }
+
         const entry = CacheEntry{
             .mac = mac,
             .timestamp_ms = std.time.milliTimestamp(),
