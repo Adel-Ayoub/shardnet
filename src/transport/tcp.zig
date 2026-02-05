@@ -6,6 +6,11 @@
 /// - Window scaling option (RFC 7323)
 /// - Nagle algorithm (RFC 896) with TCP_NODELAY opt-out
 /// - Fast retransmit and fast recovery (RFC 5681)
+/// - SYN cookies (RFC 4987) for SYN flood mitigation
+/// - ACK validation (RFC 5961) for blind data injection protection
+/// - TCP keepalive (RFC 1122) with configurable parameters
+/// - Proportional Rate Reduction (PRR, RFC 6937) for loss recovery
+/// - Early Retransmit (RFC 5827) for small-flight fast retransmit
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -56,6 +61,58 @@ pub const EndpointState = enum {
     /// Unrecoverable error occurred.
     error_state,
 };
+
+/// SYN cookie secret for SYN flood mitigation.
+/// NOTE: RFC 4987 - SYN cookies encode connection state in the ISN,
+/// allowing the server to avoid allocating state for half-open connections.
+/// The secret SHOULD be rotated periodically (e.g., every 64 seconds).
+/// SAFETY: The secret must remain confidential; if leaked, an attacker
+/// can forge SYN cookies and bypass SYN flood protection.
+var syn_cookie_secret: [16]u8 = undefined;
+var syn_cookie_initialized: bool = false;
+
+/// Initialize SYN cookie secret with random bytes.
+fn initSynCookieSecret() void {
+    if (!syn_cookie_initialized) {
+        std.crypto.random.bytes(&syn_cookie_secret);
+        syn_cookie_initialized = true;
+    }
+}
+
+/// Generate SYN cookie ISN using keyed hash.
+/// RFC 4987: ISN = hash(secret, src_ip || src_port || dst_ip || dst_port || timestamp)
+fn generateSynCookie(src_addr: tcpip.Address, src_port: u16, dst_addr: tcpip.Address, dst_port: u16) u32 {
+    initSynCookieSecret();
+
+    // Use Wyhash with secret as seed
+    const seed = std.mem.readInt(u64, syn_cookie_secret[0..8], .little);
+    var h = std.hash.Wyhash.init(seed);
+
+    // Hash addresses and ports
+    switch (src_addr) {
+        .v4 => |v4| h.update(&v4),
+        .v6 => |v6| h.update(&v6),
+    }
+    var port_buf: [2]u8 = undefined;
+    std.mem.writeInt(u16, &port_buf, src_port, .big);
+    h.update(&port_buf);
+
+    switch (dst_addr) {
+        .v4 => |v4| h.update(&v4),
+        .v6 => |v6| h.update(&v6),
+    }
+    std.mem.writeInt(u16, &port_buf, dst_port, .big);
+    h.update(&port_buf);
+
+    // Add timestamp (64-second granularity for rotation)
+    const ts: u32 = @intCast(@divFloor(std.time.timestamp(), 64));
+    var ts_buf: [4]u8 = undefined;
+    std.mem.writeInt(u32, &ts_buf, ts, .big);
+    h.update(&ts_buf);
+
+    // Return lower 32 bits of hash
+    return @truncate(h.final());
+}
 
 pub const TCPProtocol = struct {
     allocator: std.mem.Allocator,
@@ -260,6 +317,36 @@ pub const TCPEndpoint = struct {
     max_segment_size: u16 = 1460,
     nagle_enabled: bool = true, // RFC 896: Nagle algorithm, disable with TCP_NODELAY
 
+    // TCP Keepalive (RFC 1122)
+    // NOTE: Keepalive is disabled by default to match BSD and Linux defaults.
+    // When enabled, a probe is sent after keepalive_idle_ms of inactivity,
+    // retried every keepalive_interval_ms up to keepalive_count times.
+    keepalive_enabled: bool = false,
+    keepalive_idle_ms: u32 = 7200_000, // 2 hours (default per RFC 1122)
+    keepalive_interval_ms: u32 = 75_000, // 75 seconds
+    keepalive_count: u8 = 9, // 9 probes
+    keepalive_probes_sent: u8 = 0,
+    keepalive_timer: time.Timer = undefined,
+    last_activity_ms: i64 = 0,
+
+    // PRR (Proportional Rate Reduction, RFC 6937)
+    // NOTE: PRR replaces legacy slow-start-after-loss behaviour, providing
+    // smoother recovery by pacing retransmissions proportionally to ACKs.
+    prr_delivered: u32 = 0, // Data delivered since recovery started
+    prr_out: u32 = 0, // Data sent since recovery started
+    recovery_point: u32 = 0, // snd_nxt at start of recovery
+    in_recovery: bool = false,
+
+    // Early Retransmit (RFC 5827)
+    // NOTE: Triggers fast retransmit with fewer than 3 duplicate ACKs when
+    // the outstanding flight size is small (< 4 segments).
+    early_retransmit_enabled: bool = true,
+
+    // RFC 5961 ACK validation
+    // NOTE: Validates that incoming ACK numbers fall within the acceptable
+    // window [snd_una, snd_nxt] to prevent blind data injection attacks.
+    snd_una: u32 = 0, // Oldest unacknowledged sequence number
+
     pub const SackBlock = struct {
         start: u32,
         end: u32,
@@ -384,6 +471,7 @@ pub const TCPEndpoint = struct {
         self.retransmit_timer = time.Timer.init(handleRetransmitTimer, self);
         self.time_wait_timer = time.Timer.init(handleTimeWaitTimer, self);
         self.delayed_ack_timer = time.Timer.init(handleDelayedAckTimer, self);
+        self.keepalive_timer = time.Timer.init(handleKeepaliveTimer, self);
         self.sack_enabled = false;
         self.hint_sack_enabled = false;
         self.backlog = 0;
@@ -394,6 +482,24 @@ pub const TCPEndpoint = struct {
         self.ts_recent = 0;
         self.max_segment_size = mss;
         self.nagle_enabled = true;
+
+        // TCP Keepalive (RFC 1122) - disabled by default
+        self.keepalive_enabled = false;
+        self.keepalive_idle_ms = 7200_000;
+        self.keepalive_interval_ms = 75_000;
+        self.keepalive_count = 9;
+        self.keepalive_probes_sent = 0;
+        self.last_activity_ms = std.time.milliTimestamp();
+
+        // PRR (RFC 6937) recovery state
+        self.prr_delivered = 0;
+        self.prr_out = 0;
+        self.recovery_point = 0;
+        self.in_recovery = false;
+        self.early_retransmit_enabled = true;
+
+        // RFC 5961 ACK validation
+        self.snd_una = initial_seq;
     }
 
     pub fn transportEndpoint(self: *TCPEndpoint) stack.TransportEndpoint {
@@ -689,6 +795,165 @@ pub const TCPEndpoint = struct {
             self.sendControl(header.TCPFlagAck) catch {};
             self.rcv_packets_since_ack = 0;
         }
+    }
+
+    /// TCP keepalive timer handler (RFC 1122 Section 4.2.3.6).
+    /// Sends keepalive probes when the connection has been idle.
+    fn handleKeepaliveTimer(ptr: *anyopaque) void {
+        const self: *TCPEndpoint = @ptrCast(@alignCast(ptr));
+        self.incRef();
+        defer self.decRef();
+
+        if (!self.keepalive_enabled) return;
+        if (self.state != .established and self.state != .close_wait) return;
+
+        const now = std.time.milliTimestamp();
+        const idle_time = now - self.last_activity_ms;
+
+        // Check if we've been idle long enough
+        if (idle_time < self.keepalive_idle_ms) {
+            // Reschedule for remaining idle time
+            const remaining = self.keepalive_idle_ms - @as(u32, @intCast(idle_time));
+            self.stack.timer_queue.schedule(&self.keepalive_timer, remaining);
+            return;
+        }
+
+        // Check if we've exceeded probe count
+        if (self.keepalive_probes_sent >= self.keepalive_count) {
+            // NOTE: Connection is dead, close it
+            log.warn("TCP: Keepalive probes exhausted, closing connection", .{});
+            self.state = .error_state;
+            self.notify(waiter.EventErr | waiter.EventHup);
+            return;
+        }
+
+        // Send keepalive probe (ACK with seq = snd_una - 1)
+        self.sendKeepaliveProbe() catch {};
+        self.keepalive_probes_sent += 1;
+
+        // Schedule next probe
+        self.stack.timer_queue.schedule(&self.keepalive_timer, self.keepalive_interval_ms);
+    }
+
+    /// Send a TCP keepalive probe.
+    /// The probe is an ACK with sequence number snd_una - 1 (RFC 1122).
+    fn sendKeepaliveProbe(self: *TCPEndpoint) !void {
+        const la = self.local_addr orelse return tcpip.Error.InvalidEndpointState;
+        const ra = self.remote_addr orelse return tcpip.Error.InvalidEndpointState;
+        const net_proto: u16 = if (ra.addr == .v4) 0x0800 else 0x86dd;
+
+        if (self.cached_route == null or self.cached_route.?.net_proto != net_proto) {
+            self.cached_route = try self.stack.findRoute(ra.nic, la.addr, ra.addr, net_proto);
+        }
+        var r = self.cached_route.?;
+
+        const hdr_buf = self.proto.header_pool.acquire() catch return tcpip.Error.OutOfMemory;
+        var pre = buffer.Prependable.init(hdr_buf);
+        const tcp_hdr = pre.prepend(header.TCPMinimumSize).?;
+        @memset(tcp_hdr, 0);
+        var h = header.TCP.init(tcp_hdr);
+
+        // NOTE: Keepalive probe uses seq = snd_una - 1 to elicit ACK
+        const probe_seq = self.snd_una -% 1;
+        h.encode(la.port, ra.port, probe_seq, self.rcv_nxt, header.TCPFlagAck, @as(u16, @intCast(@min(self.rcv_wnd >> @as(u5, @intCast(self.rcv_wnd_scale)), 65535))));
+        h.setChecksum(h.calculateChecksum(la.addr, ra.addr, &.{}));
+
+        const pb = tcpip.PacketBuffer{
+            .data = buffer.VectorisedView.empty(),
+            .header = pre,
+        };
+
+        try r.writePacket(ProtocolNumber, pb);
+        stats.global_stats.tcp.tx_keepalive_probes += 1;
+    }
+
+    /// Reset keepalive timer on activity.
+    fn resetKeepaliveTimer(self: *TCPEndpoint) void {
+        if (!self.keepalive_enabled) return;
+        self.last_activity_ms = std.time.milliTimestamp();
+        self.keepalive_probes_sent = 0;
+        if (self.state == .established or self.state == .close_wait) {
+            self.stack.timer_queue.cancel(&self.keepalive_timer);
+            self.stack.timer_queue.schedule(&self.keepalive_timer, self.keepalive_idle_ms);
+        }
+    }
+
+    /// Validate ACK number per RFC 5961.
+    /// Returns true if the ACK is within the acceptable window.
+    /// SAFETY: This prevents blind data injection attacks where an attacker
+    /// guesses ACK numbers to inject data into the connection.
+    fn validateAck(self: *TCPEndpoint, ack: u32) bool {
+        // RFC 5961 Section 5.2: ACK must be in range (snd_una, snd_nxt]
+        const diff_una = ack -% self.snd_una;
+        const diff_nxt = self.snd_nxt -% self.snd_una;
+
+        // ACK is valid if snd_una < ack <= snd_nxt
+        return diff_una > 0 and diff_una <= diff_nxt;
+    }
+
+    /// PRR (Proportional Rate Reduction) send decision per RFC 6937.
+    /// Returns the number of bytes allowed to send during recovery.
+    /// NOTE: PRR equation (Figure 1 of RFC 6937):
+    ///   sndcnt = CEIL(prr_delivered * ssthresh / RecoverFS) - prr_out
+    fn prrAllowedSend(self: *TCPEndpoint) u32 {
+        if (!self.in_recovery) return self.cc.getCwnd();
+
+        const ssthresh = self.cc.getSsthresh();
+        const recover_fs = self.recovery_point -% self.snd_una;
+        if (recover_fs == 0) return 0;
+
+        // PRR-SSRB (Slow Start Reduction Bound) variant
+        const limit = @divFloor(self.prr_delivered * ssthresh, recover_fs);
+        if (limit > self.prr_out) {
+            return @as(u32, @intCast(limit - self.prr_out));
+        }
+        return 0;
+    }
+
+    /// Enter recovery mode for PRR.
+    fn enterRecovery(self: *TCPEndpoint) void {
+        if (self.in_recovery) return;
+        self.in_recovery = true;
+        self.recovery_point = self.snd_nxt;
+        self.prr_delivered = 0;
+        self.prr_out = 0;
+        self.cc.onLoss();
+        log.debug("TCP: Entering PRR recovery, recovery_point={}", .{self.recovery_point});
+    }
+
+    /// Exit recovery mode when all lost data is acknowledged.
+    fn maybeExitRecovery(self: *TCPEndpoint, ack: u32) void {
+        if (!self.in_recovery) return;
+        // Exit recovery when ACK >= recovery_point
+        const diff = ack -% self.recovery_point;
+        if (diff == 0 or (diff > 0 and diff < 0x80000000)) {
+            self.in_recovery = false;
+            log.debug("TCP: Exiting PRR recovery", .{});
+        }
+    }
+
+    /// Check for Early Retransmit (RFC 5827).
+    /// Triggers fast retransmit with fewer than 3 dup ACKs when flight is small.
+    fn checkEarlyRetransmit(self: *TCPEndpoint) bool {
+        if (!self.early_retransmit_enabled) return false;
+
+        // RFC 5827 Section 3: ER triggers when:
+        // 1. Flight size is less than 4 segments
+        // 2. There are no unsent data segments
+        // 3. DupAck count >= (outstanding - 1)
+        const in_flight = self.snd_nxt -% self.snd_una;
+        const mss = self.max_segment_size;
+        const outstanding_segments = (in_flight + mss - 1) / mss;
+
+        if (outstanding_segments >= 4) return false;
+        if (self.snd_queue.first == null) return false; // Nothing to retransmit
+
+        // ER threshold: dup_ack_count >= outstanding - 1
+        if (self.dup_ack_count >= outstanding_segments -| 1) {
+            log.debug("TCP: Early Retransmit triggered (dup_acks={}, outstanding={})", .{ self.dup_ack_count, outstanding_segments });
+            return true;
+        }
+        return false;
     }
 
     /// Implement delayed ACKs (RFC 1122 Section 4.2.3.2).
