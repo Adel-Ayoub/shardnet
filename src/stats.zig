@@ -170,6 +170,11 @@ pub const TCPStats = struct {
     tx_psh: Atomic(u64) = Atomic(u64).init(0),
     tx_fin: Atomic(u64) = Atomic(u64).init(0),
 
+    // Keepalive and recovery stats
+    tx_keepalive_probes: Atomic(u64) = Atomic(u64).init(0),
+    prr_recovery_entries: Atomic(u64) = Atomic(u64).init(0),
+    early_retransmits: Atomic(u64) = Atomic(u64).init(0),
+
     pub fn snapshot(self: *const TCPStats) TCPStatsSnapshot {
         return .{
             .rx_segments = atomicLoad(&self.rx_segments),
