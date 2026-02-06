@@ -4,6 +4,9 @@
 /// - Recursive label decompression with cycle detection (max 5 hops)
 /// - A, AAAA, SRV, TXT, and CNAME record parsing
 /// - Stub resolver with configurable timeout
+/// - TTL-based response caching (RFC 1035 Section 7.2)
+/// - Negative caching for NXDOMAIN responses (RFC 2308)
+/// - Hosts file lookup (/etc/hosts)
 
 const std = @import("std");
 const tcpip = @import("tcpip.zig");
@@ -15,6 +18,24 @@ const log = @import("log.zig").scoped(.dns);
 
 /// Maximum pointer hops for label decompression (prevents cycles).
 const MaxCompressionHops = 5;
+
+/// Default negative cache TTL (RFC 2308 recommends max 3 hours).
+const DEFAULT_NEGATIVE_TTL_SEC: u32 = 300; // 5 minutes
+
+/// Maximum cache entries.
+const MAX_CACHE_ENTRIES: usize = 1024;
+
+/// DNS cache entry.
+pub const CacheEntry = struct {
+    address: ?tcpip.Address, // null for negative cache (NXDOMAIN)
+    record_type: RecordType,
+    expires_at_ms: i64,
+    is_negative: bool,
+
+    pub fn isExpired(self: CacheEntry) bool {
+        return std.time.milliTimestamp() >= self.expires_at_ms;
+    }
+};
 
 /// DNS record types.
 pub const RecordType = enum(u16) {
@@ -70,6 +91,87 @@ pub const ResourceRecord = struct {
     };
 };
 
+/// Parse an IPv4 address string.
+fn parseIPv4(str: []const u8) ?[4]u8 {
+    var result: [4]u8 = undefined;
+    var it = std.mem.splitScalar(u8, str, '.');
+    var i: usize = 0;
+    while (it.next()) |part| {
+        if (i >= 4) return null;
+        result[i] = std.fmt.parseInt(u8, part, 10) catch return null;
+        i += 1;
+    }
+    if (i != 4) return null;
+    return result;
+}
+
+/// Parse an IPv6 address string (simplified, full form only).
+fn parseIPv6(str: []const u8) ?[16]u8 {
+    // Handle :: expansion
+    var result: [16]u8 = [_]u8{0} ** 16;
+
+    // Check for :: (zero compression)
+    if (std.mem.indexOf(u8, str, "::")) |pos| {
+        // Split into before and after ::
+        const before = str[0..pos];
+        const after = if (pos + 2 < str.len) str[pos + 2 ..] else "";
+
+        var idx: usize = 0;
+
+        // Parse groups before ::
+        if (before.len > 0) {
+            var it = std.mem.splitScalar(u8, before, ':');
+            while (it.next()) |part| {
+                if (idx >= 16) return null;
+                const val = std.fmt.parseInt(u16, part, 16) catch return null;
+                result[idx] = @truncate(val >> 8);
+                result[idx + 1] = @truncate(val);
+                idx += 2;
+            }
+        }
+
+        // Parse groups after :: (from the end)
+        if (after.len > 0) {
+            var after_groups: [8][2]u8 = undefined;
+            var after_count: usize = 0;
+            var ait = std.mem.splitScalar(u8, after, ':');
+            while (ait.next()) |part| {
+                if (after_count >= 8) return null;
+                const val = std.fmt.parseInt(u16, part, 16) catch return null;
+                after_groups[after_count][0] = @truncate(val >> 8);
+                after_groups[after_count][1] = @truncate(val);
+                after_count += 1;
+            }
+
+            // Copy from end
+            var end_idx: usize = 16;
+            var i: usize = after_count;
+            while (i > 0) {
+                i -= 1;
+                end_idx -= 2;
+                result[end_idx] = after_groups[i][0];
+                result[end_idx + 1] = after_groups[i][1];
+            }
+        }
+
+        return result;
+    }
+
+    // Full form: 8 groups separated by :
+    var it = std.mem.splitScalar(u8, str, ':');
+    var idx: usize = 0;
+    while (it.next()) |part| {
+        if (idx >= 16) return null;
+        const val = std.fmt.parseInt(u16, part, 16) catch return null;
+        result[idx] = @truncate(val >> 8);
+        result[idx + 1] = @truncate(val);
+        idx += 2;
+    }
+    if (idx != 16) return null;
+
+    return result;
+}
+
 /// DNS stub resolver.
 pub const Resolver = struct {
     stack: *stack.Stack,
@@ -77,12 +179,99 @@ pub const Resolver = struct {
     dns_server: tcpip.Address,
     timeout_ms: u32 = 5000,
 
+    // TTL cache (RFC 1035 Section 7.2)
+    cache: std.StringHashMap(CacheEntry),
+    cache_enabled: bool = true,
+
+    // Negative cache TTL (RFC 2308)
+    negative_ttl_sec: u32 = DEFAULT_NEGATIVE_TTL_SEC,
+
+    // Hosts file lookup
+    hosts_file_enabled: bool = true,
+    hosts_entries: ?std.StringHashMap(tcpip.Address) = null,
+
     pub fn init(s: *stack.Stack, dns_server: tcpip.Address) Resolver {
         return .{
             .stack = s,
             .allocator = s.allocator,
             .dns_server = dns_server,
+            .cache = std.StringHashMap(CacheEntry).init(s.allocator),
         };
+    }
+
+    pub fn deinit(self: *Resolver) void {
+        // Free cache keys
+        var it = self.cache.keyIterator();
+        while (it.next()) |key| {
+            self.allocator.free(key.*);
+        }
+        self.cache.deinit();
+
+        // Free hosts entries
+        if (self.hosts_entries) |*hosts| {
+            var hit = hosts.keyIterator();
+            while (hit.next()) |key| {
+                self.allocator.free(key.*);
+            }
+            hosts.deinit();
+        }
+    }
+
+    /// Enable or disable caching.
+    pub fn setCacheEnabled(self: *Resolver, enabled: bool) void {
+        self.cache_enabled = enabled;
+    }
+
+    /// Set negative cache TTL in seconds.
+    pub fn setNegativeTtl(self: *Resolver, ttl_sec: u32) void {
+        self.negative_ttl_sec = ttl_sec;
+    }
+
+    /// Clear the DNS cache.
+    pub fn clearCache(self: *Resolver) void {
+        var it = self.cache.keyIterator();
+        while (it.next()) |key| {
+            self.allocator.free(key.*);
+        }
+        self.cache.clearRetainingCapacity();
+    }
+
+    /// Load hosts file entries (e.g., /etc/hosts).
+    pub fn loadHostsFile(self: *Resolver, path: []const u8) !void {
+        const file = std.fs.openFileAbsolute(path, .{}) catch |err| {
+            if (err == error.FileNotFound) return;
+            return err;
+        };
+        defer file.close();
+
+        if (self.hosts_entries == null) {
+            self.hosts_entries = std.StringHashMap(tcpip.Address).init(self.allocator);
+        }
+
+        var buf: [4096]u8 = undefined;
+        var reader = file.reader();
+
+        while (reader.readUntilDelimiterOrEof(&buf, '\n')) |maybe_line| {
+            const line = maybe_line orelse break;
+
+            // Skip comments and empty lines
+            const trimmed = std.mem.trim(u8, line, " \t\r");
+            if (trimmed.len == 0 or trimmed[0] == '#') continue;
+
+            // Parse: IP hostname [aliases...]
+            var parts = std.mem.tokenizeAny(u8, trimmed, " \t");
+            const ip_str = parts.next() orelse continue;
+            const hostname = parts.next() orelse continue;
+
+            // Parse IPv4 or IPv6
+            if (parseIPv4(ip_str)) |ipv4| {
+                const key = try self.allocator.dupe(u8, hostname);
+                try self.hosts_entries.?.put(key, .{ .v4 = ipv4 });
+            } else if (parseIPv6(ip_str)) |ipv6| {
+                const key = try self.allocator.dupe(u8, hostname);
+                try self.hosts_entries.?.put(key, .{ .v6 = ipv6 });
+            }
+        } else |_| {}
     }
 
     /// Set resolver timeout in milliseconds.
@@ -102,6 +291,107 @@ pub const Resolver = struct {
 
     /// Resolve hostname to address of specified type.
     pub fn resolveType(self: *Resolver, hostname: []const u8, record_type: RecordType) !tcpip.Address {
+        // 1. Check hosts file first (only for A/AAAA records)
+        if (self.hosts_file_enabled and (record_type == .A or record_type == .AAAA)) {
+            if (self.hosts_entries) |hosts| {
+                if (hosts.get(hostname)) |addr| {
+                    // Match address type to record type
+                    switch (addr) {
+                        .v4 => if (record_type == .A) return addr,
+                        .v6 => if (record_type == .AAAA) return addr,
+                    }
+                }
+            }
+        }
+
+        // 2. Check cache
+        if (self.cache_enabled) {
+            const cache_key = try self.makeCacheKey(hostname, record_type);
+            defer self.allocator.free(cache_key);
+
+            if (self.cache.get(cache_key)) |entry| {
+                if (!entry.isExpired()) {
+                    if (entry.is_negative) {
+                        return error.NameNotFound;
+                    }
+                    if (entry.address) |addr| {
+                        return addr;
+                    }
+                }
+            }
+        }
+
+        // 3. Perform DNS query
+        const result = self.performDnsQuery(hostname, record_type);
+
+        // 4. Cache the result (success or negative)
+        if (self.cache_enabled) {
+            self.cacheResult(hostname, record_type, result) catch {};
+        }
+
+        return result;
+    }
+
+    fn makeCacheKey(self: *Resolver, hostname: []const u8, record_type: RecordType) ![]u8 {
+        const rtype_num = @intFromEnum(record_type);
+        const key = try std.fmt.allocPrint(self.allocator, "{s}:{d}", .{ hostname, rtype_num });
+        return key;
+    }
+
+    fn cacheResult(self: *Resolver, hostname: []const u8, record_type: RecordType, result: anyerror!tcpip.Address) void {
+        // Limit cache size
+        if (self.cache.count() >= MAX_CACHE_ENTRIES) {
+            // Remove expired entries first
+            var to_remove = std.ArrayList([]const u8).init(self.allocator);
+            defer to_remove.deinit();
+
+            var it = self.cache.iterator();
+            while (it.next()) |kv| {
+                if (kv.value_ptr.isExpired()) {
+                    to_remove.append(kv.key_ptr.*) catch continue;
+                }
+            }
+
+            for (to_remove.items) |key| {
+                _ = self.cache.remove(key);
+                self.allocator.free(key);
+            }
+        }
+
+        const cache_key = self.makeCacheKey(hostname, record_type) catch return;
+
+        if (result) |addr| {
+            // NOTE: Use default TTL of 300s for caching
+            // Real TTL should come from DNS response
+            const entry = CacheEntry{
+                .address = addr,
+                .record_type = record_type,
+                .expires_at_ms = std.time.milliTimestamp() + 300 * 1000,
+                .is_negative = false,
+            };
+            self.cache.put(cache_key, entry) catch {
+                self.allocator.free(cache_key);
+            };
+        } else |err| {
+            if (err == error.NameNotFound) {
+                // Negative cache entry
+                const entry = CacheEntry{
+                    .address = null,
+                    .record_type = record_type,
+                    .expires_at_ms = std.time.milliTimestamp() + @as(i64, self.negative_ttl_sec) * 1000,
+                    .is_negative = true,
+                };
+                self.cache.put(cache_key, entry) catch {
+                    self.allocator.free(cache_key);
+                };
+            } else {
+                self.allocator.free(cache_key);
+            }
+        }
+    }
+
+    /// Perform the actual DNS query over UDP.
+    fn performDnsQuery(self: *Resolver, hostname: []const u8, record_type: RecordType) !tcpip.Address {
         var wq = waiter.Queue{};
         const udp_proto = self.stack.transport_protocols.get(header.UDP.ProtocolNumber) orelse
             return error.NoUdpProtocol;
