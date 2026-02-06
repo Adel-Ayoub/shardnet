@@ -1,7 +1,8 @@
 /// CUBIC congestion control (RFC 9438).
 ///
 /// Implements the full CUBIC window growth function W_cubic(t),
-/// HyStart++ slow-start exit (RFC 9406), and Reno-friendly mode.
+/// HyStart++ slow-start exit (RFC 9406), Reno-friendly mode, and
+/// fast convergence (RFC 9438 Section 4.7).
 
 const std = @import("std");
 const CongestionControl = @import("control.zig").CongestionControl;
@@ -25,6 +26,11 @@ pub const Cubic = struct {
 
     // Reno-friendly tracking (W_est from RFC 9438 Section 4.3)
     reno_cwnd: u32,
+
+    // Fast convergence (RFC 9438 Section 4.7)
+    // Track last W_max to detect if another flow released bandwidth
+    w_last_max: u32,
+    fast_convergence_enabled: bool,
 
     // HyStart++ state (RFC 9406)
     hystart_enabled: bool,
@@ -63,6 +69,8 @@ pub const Cubic = struct {
             .epoch_start = 0,
             .origin_point = 0,
             .reno_cwnd = 0,
+            .w_last_max = 0,
+            .fast_convergence_enabled = true,
             .hystart_enabled = true,
             .hystart_round_start = 0,
             .hystart_last_rtt = 0,
@@ -104,6 +112,8 @@ pub const Cubic = struct {
             .epoch_start = 0,
             .origin_point = 0,
             .reno_cwnd = 0,
+            .w_last_max = 0,
+            .fast_convergence_enabled = true,
             .hystart_enabled = true,
             .hystart_round_start = 0,
             .hystart_last_rtt = 0,
@@ -257,7 +267,20 @@ pub const Cubic = struct {
 
         // NOTE: RFC 9438 Section 4.5 - Multiplicative decrease
         self.epoch_start = 0;
-        self.w_max = self.cwnd;
+
+        // NOTE: RFC 9438 Section 4.7 - Fast convergence
+        // If cwnd < w_last_max, another flow may have released bandwidth
+        // Apply fast convergence: w_max = cwnd * (1 + beta) / 2
+        if (self.fast_convergence_enabled and self.cwnd < self.w_last_max) {
+            // Fast convergence: reduce W_max more aggressively
+            // w_max = cwnd * (1 + beta) / 2 = cwnd * 0.85
+            const fast_conv_factor: f64 = (1.0 + BETA) / 2.0;
+            self.w_max = @as(u32, @intFromFloat(@as(f64, @floatFromInt(self.cwnd)) * fast_conv_factor));
+        } else {
+            self.w_max = self.cwnd;
+        }
+        self.w_last_max = self.cwnd;
+
         self.ssthresh = @max(@as(u32, @intFromFloat(@as(f64, @floatFromInt(self.cwnd)) * BETA)), 2 * self.mss);
         self.cwnd = self.ssthresh + 3 * self.mss;
         self.state = .fast_recovery;
