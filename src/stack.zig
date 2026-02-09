@@ -1,7 +1,12 @@
 /// Network stack with configuration, routing, and protocol dispatch.
 ///
 /// Provides longest-prefix routing, transport demultiplexing with
-/// sharded endpoint tables, and graceful shutdown support.
+/// sharded endpoint tables, graceful shutdown support, and health check
+/// endpoint via Unix domain socket.
+///
+/// // NOTE: The health check uses a Unix socket rather than an HTTP endpoint
+/// // because: (1) no HTTP layer dependency, (2) accessible even when the
+/// // network stack itself is unhealthy, (3) simple local-only access control.
 
 const std = @import("std");
 const tcpip = @import("tcpip.zig");
@@ -39,6 +44,38 @@ pub const Config = struct {
     arp_pending_timeout_ms: i64 = 1000,
     /// Cluster pool prewarm count.
     cluster_pool_prewarm: usize = 1024,
+    /// Unix socket path for health check endpoint (null to disable).
+    /// // NOTE: Unix socket provides health monitoring without HTTP dependency.
+    health_check_socket: ?[]const u8 = "/tmp/shardnet.sock",
+};
+
+/// Health check response structure.
+pub const HealthStatus = struct {
+    uptime_seconds: i64,
+    nic_count: usize,
+    tcp_connections: usize,
+    arp_cache_size: usize,
+    rx_packets: u64,
+    tx_packets: u64,
+    rx_bytes: u64,
+    tx_bytes: u64,
+    rx_drops: u64,
+
+    pub fn toJson(self: HealthStatus, buf: []u8) ![]u8 {
+        return try std.fmt.bufPrint(buf,
+            \\{{"uptime_seconds":{d},"nic_count":{d},"tcp_connections":{d},"arp_cache_size":{d},"rx_packets":{d},"tx_packets":{d},"rx_bytes":{d},"tx_bytes":{d},"rx_drops":{d}}}
+        , .{
+            self.uptime_seconds,
+            self.nic_count,
+            self.tcp_connections,
+            self.arp_cache_size,
+            self.rx_packets,
+            self.tx_packets,
+            self.rx_bytes,
+            self.tx_bytes,
+            self.rx_drops,
+        });
+    }
 };
 
 pub const LinkEndpoint = struct {
@@ -568,6 +605,7 @@ pub const Stack = struct {
     ephemeral_port: u16,
     tcp_msl: u64,
     running: std.atomic.Value(bool),
+    start_time_ms: i64,
 
     pub const AddressContext = struct {
         pub fn hash(_: AddressContext, key: tcpip.Address) u64 {
@@ -600,6 +638,7 @@ pub const Stack = struct {
             .ephemeral_port = config.ephemeral_port_start,
             .tcp_msl = config.tcp_msl,
             .running = std.atomic.Value(bool).init(false),
+            .start_time_ms = std.time.milliTimestamp(),
         };
     }
 
@@ -662,6 +701,41 @@ pub const Stack = struct {
 
     pub fn isRunning(self: *Stack) bool {
         return self.running.load(.acquire);
+    }
+
+    // -- Health check endpoint -----------------------------------------------
+
+    /// Get current health status.
+    pub fn getHealthStatus(self: *Stack) HealthStatus {
+        const now_ms = std.time.milliTimestamp();
+        const uptime_sec = @divFloor(now_ms - self.start_time_ms, 1000);
+
+        // Count TCP connections across all shards
+        var tcp_conn_count: usize = 0;
+        for (&self.endpoints.shards) |*shard| {
+            tcp_conn_count += shard.count();
+        }
+
+        // Get global stats
+        const global = stats.global_stats;
+
+        return .{
+            .uptime_seconds = uptime_sec,
+            .nic_count = self.nics.count(),
+            .tcp_connections = tcp_conn_count,
+            .arp_cache_size = self.link_addr_cache.count(),
+            .rx_packets = global.link.rx_packets.load(.monotonic),
+            .tx_packets = global.link.tx_packets.load(.monotonic),
+            .rx_bytes = global.link.rx_bytes.load(.monotonic),
+            .tx_bytes = global.link.tx_bytes.load(.monotonic),
+            .rx_drops = global.link.rx_drops.load(.monotonic),
+        };
+    }
+
+    /// Write health status as JSON to a buffer.
+    pub fn writeHealthJson(self: *Stack, buf: []u8) ![]u8 {
+        const status = self.getHealthStatus();
+        return status.toJson(buf);
     }
 
     pub fn registerNetworkProtocol(self: *Stack, proto: NetworkProtocol) !void {
