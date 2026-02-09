@@ -6,8 +6,14 @@
 /// readable, the loop calls `pollReady()` to drain all pending entries and
 /// dispatches them to registered handler callbacks.
 ///
+/// Timer wheel:
+///   A timerfd-based timer wheel consolidates all protocol timers (TCP
+///   retransmit, keepalive, ARP expiry, DNS TTL) into a single kernel fd.
+///   // PERF: At 10k concurrent connections, this reduces fd count from
+///   // 10k+ (one per timer) to 1, avoiding epoll scalability issues.
+///
 /// Ownership model:
-///   - The EventMultiplexer owns the eventfd and the internal queues.
+///   - The EventMultiplexer owns the eventfd, timerfd, and the internal queues.
 ///   - Waiter Entries are *not* owned; callers must ensure entries outlive
 ///     their registration (see waiter.zig for lifetime rules).
 ///   - Registered fd handlers (FdHandler) are owned by the caller; the
@@ -27,6 +33,157 @@ pub const MuxStats = struct {
     spurious_wakeups: u64 = 0,
     /// Total upcalls received from the stack.
     upcalls_received: u64 = 0,
+    /// Total timer callbacks invoked.
+    timers_fired: u64 = 0,
+    /// Current number of registered timers.
+    active_timers: u64 = 0,
+};
+
+// ---------------------------------------------------------------------------
+// TimerWheel — timerfd-based consolidated timer management
+// ---------------------------------------------------------------------------
+
+/// Timer callback signature.
+pub const TimerCallback = *const fn (user_data: ?*anyopaque) void;
+
+/// A registered timer entry.
+pub const TimerEntry = struct {
+    /// Absolute expiration time in milliseconds (monotonic).
+    expires_at_ms: i64,
+    /// Callback invoked when timer fires.
+    callback: TimerCallback,
+    /// User-provided context pointer.
+    user_data: ?*anyopaque,
+    /// Internal: is this entry pending in the wheel?
+    active: bool = true,
+};
+
+/// Timer wheel using a single timerfd for all protocol timers.
+/// // PERF: Reduces fd count from O(connections) to O(1), eliminating
+/// // epoll scalability issues at high connection counts.
+pub const TimerWheel = struct {
+    /// Sorted list of timer entries (by expiration time).
+    entries: std.ArrayList(*TimerEntry),
+    /// The kernel timerfd.
+    timer_fd: std.posix.fd_t,
+    allocator: std.mem.Allocator,
+
+    const CLOCK_MONOTONIC: i32 = 1;
+    const TFD_NONBLOCK: u32 = 0o4000;
+
+    pub fn init(allocator: std.mem.Allocator) !TimerWheel {
+        // Create timerfd with CLOCK_MONOTONIC and non-blocking
+        const fd = std.posix.timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK) catch |err| {
+            // Fallback: use -1 to indicate timerfd unavailable
+            if (err == error.SystemResources) return .{
+                .entries = std.ArrayList(*TimerEntry).init(allocator),
+                .timer_fd = -1,
+                .allocator = allocator,
+            };
+            return err;
+        };
+
+        return .{
+            .entries = std.ArrayList(*TimerEntry).init(allocator),
+            .timer_fd = fd,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *TimerWheel) void {
+        if (self.timer_fd >= 0) {
+            std.posix.close(self.timer_fd);
+        }
+        self.entries.deinit();
+    }
+
+    /// Schedule a timer to fire after delay_ms milliseconds.
+    pub fn schedule(self: *TimerWheel, entry: *TimerEntry, delay_ms: u64) !void {
+        const now_ms = std.time.milliTimestamp();
+        entry.expires_at_ms = now_ms + @as(i64, @intCast(delay_ms));
+        entry.active = true;
+
+        // Insert in sorted order (earliest first)
+        var insert_idx: usize = self.entries.items.len;
+        for (self.entries.items, 0..) |e, i| {
+            if (entry.expires_at_ms < e.expires_at_ms) {
+                insert_idx = i;
+                break;
+            }
+        }
+        try self.entries.insert(insert_idx, entry);
+
+        // If this is the earliest timer, update timerfd
+        if (insert_idx == 0) {
+            self.armTimer(entry.expires_at_ms);
+        }
+    }
+
+    /// Cancel a scheduled timer.
+    pub fn cancel(self: *TimerWheel, entry: *TimerEntry) void {
+        entry.active = false;
+        for (self.entries.items, 0..) |e, i| {
+            if (e == entry) {
+                _ = self.entries.orderedRemove(i);
+                break;
+            }
+        }
+    }
+
+    /// Process expired timers. Returns number of timers fired.
+    pub fn tick(self: *TimerWheel) u64 {
+        if (self.timer_fd >= 0) {
+            // Drain timerfd to clear the signal
+            var expirations: u64 = 0;
+            _ = std.posix.read(self.timer_fd, std.mem.asBytes(&expirations)) catch {};
+        }
+
+        const now_ms = std.time.milliTimestamp();
+        var fired: u64 = 0;
+
+        while (self.entries.items.len > 0) {
+            const entry = self.entries.items[0];
+            if (entry.expires_at_ms > now_ms) break;
+
+            _ = self.entries.orderedRemove(0);
+            if (entry.active) {
+                entry.active = false;
+                entry.callback(entry.user_data);
+                fired += 1;
+            }
+        }
+
+        // Arm for next timer
+        if (self.entries.items.len > 0) {
+            self.armTimer(self.entries.items[0].expires_at_ms);
+        }
+
+        return fired;
+    }
+
+    fn armTimer(self: *TimerWheel, expires_at_ms: i64) void {
+        if (self.timer_fd < 0) return;
+
+        const now_ms = std.time.milliTimestamp();
+        const delay_ms = @max(1, expires_at_ms - now_ms);
+        const delay_ns = @as(u64, @intCast(delay_ms)) * 1_000_000;
+
+        const ts = std.posix.timespec{
+            .sec = @intCast(delay_ns / 1_000_000_000),
+            .nsec = @intCast(delay_ns % 1_000_000_000),
+        };
+        const new_value = std.posix.itimerspec{
+            .interval = .{ .sec = 0, .nsec = 0 },
+            .value = ts,
+        };
+
+        _ = std.posix.timerfd_settime(self.timer_fd, .{}, &new_value, null) catch {};
+    }
+
+    /// Get the timerfd for registration with epoll/event loop.
+    pub fn fd(self: *const TimerWheel) std.posix.fd_t {
+        return self.timer_fd;
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -60,6 +217,11 @@ pub const EventMultiplexer = struct {
     /// Registered fd handlers for the dispatch() path.
     fd_handlers: std.ArrayList(FdHandler),
 
+    /// Consolidated timer wheel for all protocol timers.
+    /// // PERF: Single timerfd serves TCP retransmit, keepalive, ARP expiry,
+    /// // and DNS TTL timers, reducing fd count from O(n) to O(1).
+    timer_wheel: TimerWheel,
+
     pub fn init(allocator: std.mem.Allocator) !*EventMultiplexer {
         const self = try allocator.create(EventMultiplexer);
 
@@ -72,6 +234,7 @@ pub const EventMultiplexer = struct {
             .signal_fd = efd,
             .allocator = allocator,
             .fd_handlers = std.ArrayList(FdHandler).init(allocator),
+            .timer_wheel = try TimerWheel.init(allocator),
         };
         return self;
     }
@@ -80,6 +243,7 @@ pub const EventMultiplexer = struct {
         std.posix.close(self.signal_fd);
         self.ready_queue.deinit();
         self.fd_handlers.deinit();
+        self.timer_wheel.deinit();
         self.allocator.destroy(self);
     }
 
@@ -119,6 +283,41 @@ pub const EventMultiplexer = struct {
             handler.callback(handler.fd, handler.user_data);
             self.stats.events_fired += 1;
         }
+    }
+
+    // -- Timer wheel interface -----------------------------------------------
+
+    /// Schedule a timer to fire after delay_ms milliseconds.
+    /// The timer entry must outlive the scheduled duration.
+    pub fn scheduleTimer(self: *EventMultiplexer, entry: *TimerEntry, delay_ms: u64) !void {
+        try self.timer_wheel.schedule(entry, delay_ms);
+        self.stats.active_timers += 1;
+    }
+
+    /// Cancel a previously scheduled timer.
+    pub fn cancelTimer(self: *EventMultiplexer, entry: *TimerEntry) void {
+        self.timer_wheel.cancel(entry);
+        if (self.stats.active_timers > 0) {
+            self.stats.active_timers -= 1;
+        }
+    }
+
+    /// Process expired timers. Should be called when timerFd() is readable,
+    /// or periodically if timerfd is unavailable.
+    pub fn processTimers(self: *EventMultiplexer) void {
+        const fired = self.timer_wheel.tick();
+        self.stats.timers_fired += fired;
+        if (fired <= self.stats.active_timers) {
+            self.stats.active_timers -= fired;
+        } else {
+            self.stats.active_timers = 0;
+        }
+    }
+
+    /// Returns the timerfd for registration with epoll/event loop.
+    /// Returns -1 if timerfd is unavailable on this system.
+    pub fn timerFd(self: *const EventMultiplexer) std.posix.fd_t {
+        return self.timer_wheel.fd();
     }
 
     // -- Stack-side upcall --------------------------------------------------
