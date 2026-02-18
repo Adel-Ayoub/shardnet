@@ -4,8 +4,6 @@
 
 **A high-performance userspace TCP/IP stack written in Zig**
 
-![Architecture](assets/architecture.svg)
-
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Zig](https://img.shields.io/badge/zig-0.11+-orange.svg)](https://ziglang.org)
 
