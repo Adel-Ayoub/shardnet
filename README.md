@@ -87,7 +87,7 @@ zig build example
 - UDP Protocol: Connectionless datagram transport
 - ICMP/ICMPv6: Echo request/reply with rate limiting
 - ARP Protocol: Address resolution with cache change detection
-- DNS Resolver: Recursive DNS query support
+- DNS Resolver: TTL caching, negative cache (NXDOMAIN), hosts file lookup
 
 #### TCP Extensions (RFC Compliant)
 - Selective Acknowledgment (SACK, RFC 2018)
@@ -98,7 +98,7 @@ zig build example
 
 #### Congestion Control
 - CUBIC (RFC 9438): Default algorithm with HyStart++
-- BBR: Bottleneck Bandwidth and RTT-based control
+- BBRv2: Bandwidth plateau detection, inflight bounds
 - Pluggable Interface: Easy to add custom algorithms
 
 #### Drivers
@@ -107,10 +107,15 @@ zig build example
 - AF_XDP: XDP socket for kernel bypass
 - Loopback: Local testing without hardware
 
+#### Operations
+- Health Check: Unix socket endpoint for monitoring (/tmp/shardnet.sock)
+- Graceful Shutdown: Proper connection draining
+
 #### Performance Features
 - Zero-Copy Buffers: Cluster-based buffer pooling
 - Sharded Transport Tables: Reduced lock contention for multi-queue NICs
 - Event Multiplexing: libev and libuv integration
+- Timer Wheel: timerfd-based consolidated timer management
 - Memory Pooling: Pre-warmed pools for latency-critical paths
 - Statistics Collection: Per-layer latency tracking
 
@@ -311,11 +316,14 @@ Benchmarks on Intel Xeon E5-2680 v4, Linux 5.15:
 - [x] IPv4 with fragment reassembly
 - [x] IPv6 with extension headers
 - [x] TCP with SACK, timestamps, window scaling
-- [x] CUBIC and BBR congestion control
+- [x] CUBIC and BBRv2 congestion control
 - [x] AF_PACKET with TPACKET_V3
 - [x] AF_XDP kernel bypass
 - [x] ARP cache change detection
 - [x] ICMP rate limiting
+- [x] DNS TTL caching and hosts file
+- [x] Unix socket health check endpoint
+- [x] timerfd-based timer wheel
 - [ ] TSO/GRO offloading
 - [ ] Multi-path TCP
 - [ ] QUIC transport
@@ -326,6 +334,6 @@ Benchmarks on Intel Xeon E5-2680 v4, Linux 5.15:
 
 ## License
 
-Apache License 2.0 - Copyright (c) 2024 Adel-Ayoub
+Apache License 2.0 - Copyright (c) 2026 Adel-Ayoub
 
 See [LICENSE](LICENSE) for details.
