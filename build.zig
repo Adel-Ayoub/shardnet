@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
         debug,
         none,
     };
-    const log_level = b.option(LogLevel, "log_level", "Log level for ustack (default: debug)") orelse .debug;
+    const log_level = b.option(LogLevel, "log_level", "Log level for shardnet (default: debug)") orelse .debug;
 
     const options = b.addOptions();
     options.addOption(LogLevel, "log_level", log_level);
@@ -20,7 +20,7 @@ pub fn build(b: *std.Build) void {
 
     // -- Static library -----------------------------------------------------
     const lib = b.addStaticLibrary(.{
-        .name = "ustack",
+        .name = "shardnet",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
@@ -30,7 +30,7 @@ pub fn build(b: *std.Build) void {
 
     // -- Shared library -----------------------------------------------------
     const dylib = b.addSharedLibrary(.{
-        .name = "ustack",
+        .name = "shardnet",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
@@ -39,10 +39,10 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(dylib);
 
     // -- Importable module --------------------------------------------------
-    const ustack_mod = b.createModule(.{
+    const shardnet_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
     });
-    ustack_mod.addImport("build_options", options_mod);
+    shardnet_mod.addImport("build_options", options_mod);
 
     // -- Test step -----------------------------------------------------------
     // Discovers and runs all *_test.zig files under src/ in addition to
@@ -73,7 +73,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         t.root_module.addImport("build_options", options_mod);
-        t.root_module.addImport("ustack", ustack_mod);
+        t.root_module.addImport("shardnet", shardnet_mod);
         const run_t = b.addRunArtifact(t);
         test_step.dependOn(&run_t.step);
     }
@@ -96,7 +96,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = .ReleaseFast,
         });
-        exe.root_module.addImport("ustack", ustack_mod);
+        exe.root_module.addImport("shardnet", shardnet_mod);
         exe.linkLibC();
         exe.linkSystemLibrary("ev");
         exe.addCSourceFile(.{
@@ -113,7 +113,7 @@ pub fn build(b: *std.Build) void {
     const docs_step = b.step("docs", "Generate library documentation");
 
     const docs_lib = b.addStaticLibrary(.{
-        .name = "ustack",
+        .name = "shardnet",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
@@ -148,7 +148,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        exe.root_module.addImport("ustack", ustack_mod);
+        exe.root_module.addImport("shardnet", shardnet_mod);
         exe.linkLibC();
         exe.linkSystemLibrary(ex.lib);
         exe.addCSourceFile(.{

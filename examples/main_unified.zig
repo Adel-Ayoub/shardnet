@@ -9,9 +9,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const args = @import("args.zig");
-const ustack = @import("ustack");
-const stack = ustack.stack;
-const tcpip = ustack.tcpip;
+const shardnet = @import("shardnet");
+const stack = shardnet.stack;
+const tcpip = shardnet.tcpip;
 
 const DriverType = enum {
     af_xdp,
@@ -126,8 +126,8 @@ pub fn main() !void {
     // Create NIC based on selected driver
     switch (driver) {
         .loopback => {
-            const loopback = try allocator.create(ustack.drivers.loopback.LoopbackEndpoint);
-            loopback.* = ustack.drivers.loopback.LoopbackEndpoint.init();
+            const loopback = try allocator.create(shardnet.drivers.loopback.LoopbackEndpoint);
+            loopback.* = shardnet.drivers.loopback.LoopbackEndpoint.init();
             try s.createNIC(1, loopback.linkEndpoint());
             std.debug.print("Loopback interface created.\n", .{});
         },

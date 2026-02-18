@@ -1,6 +1,6 @@
 const std = @import("std");
-const ustack = @import("ustack");
-const stack = ustack.stack;
+const shardnet = @import("shardnet");
+const stack = shardnet.stack;
 const AfXdpEndpoint = @import("af_xdp_adapter.zig").AfXdpEndpoint;
 
 pub fn main() !void {

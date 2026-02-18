@@ -6,9 +6,9 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const ustack = @import("ustack");
-const stack = ustack.stack;
-const tcpip = ustack.tcpip;
+const shardnet = @import("shardnet");
+const stack = shardnet.stack;
+const tcpip = shardnet.tcpip;
 
 // Import shared config
 const AdapterConfig = @import("af_packet_adapter.zig").AdapterConfig;
@@ -53,7 +53,7 @@ fn checkKernelVersion() !void {
 
 /// AF_XDP link endpoint wrapper using the real driver.
 pub const AfXdpEndpoint = struct {
-    driver: if (builtin.os.tag == .linux) ustack.drivers.af_xdp.AfXdp else void,
+    driver: if (builtin.os.tag == .linux) shardnet.drivers.af_xdp.AfXdp else void,
     config: AdapterConfig,
 
     pub fn init(allocator: std.mem.Allocator, if_name: []const u8, config: AdapterConfig) !AfXdpEndpoint {
@@ -78,7 +78,7 @@ pub const AfXdpEndpoint = struct {
             return error.UnsupportedOS;
         }
 
-        const driver = try ustack.drivers.af_xdp.AfXdp.init(allocator, if_name, 0);
+        const driver = try shardnet.drivers.af_xdp.AfXdp.init(allocator, if_name, 0);
         return AfXdpEndpoint{
             .driver = driver,
             .config = config,

@@ -6,11 +6,11 @@
 
 const std = @import("std");
 const os = std.os;
-const ustack = @import("ustack");
-const stack = ustack.stack;
-const tcpip = ustack.tcpip;
-const header = ustack.header;
-const buffer = ustack.buffer;
+const shardnet = @import("shardnet");
+const stack = shardnet.stack;
+const tcpip = shardnet.tcpip;
+const header = shardnet.header;
+const buffer = shardnet.buffer;
 
 /// Unified adapter configuration shared with AF_XDP.
 pub const AdapterConfig = struct {

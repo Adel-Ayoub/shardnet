@@ -9,12 +9,12 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const ustack = @import("ustack");
-const stack = ustack.stack;
-const tcpip = ustack.tcpip;
-const waiter = ustack.waiter;
-const AfPacket = ustack.drivers.af_packet.AfPacket;
-const EventMultiplexer = ustack.event_mux.EventMultiplexer;
+const shardnet = @import("shardnet");
+const stack = shardnet.stack;
+const tcpip = shardnet.tcpip;
+const waiter = shardnet.waiter;
+const AfPacket = shardnet.drivers.af_packet.AfPacket;
+const EventMultiplexer = shardnet.event_mux.EventMultiplexer;
 
 const c = @cImport({
     @cInclude("ev.h");

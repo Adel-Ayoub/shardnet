@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420.77000000000004 860" width="420.77000000000004" height="860" style="--bg:#1a1b26;--fg:#a9b1d6;--line:#3d59a1;--accent:#7aa2f7;--muted:#565f89;background:var(--bg)">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap');
+  text { font-family: 'Inter', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 30%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="4.8" refX="8" refY="2.4" orient="auto">
+    <polygon points="0 0, 8 2.4, 0 4.8" fill="var(--_arrow)" />
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="4.8" refX="0" refY="2.4" orient="auto-start-reverse">
+    <polygon points="8 0, 0 2.4, 8 4.8" fill="var(--_arrow)" />
+  </marker>
+</defs>
+<polyline points="122.65000000000002,262 122.65000000000002,337 165.365,337" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="202.81500000000003,355 202.81500000000003,383.5 81.04000000000005,383.5 81.04000000000005,412" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="202.81500000000003,355 202.81500000000003,383.5 197.10500000000008,383.5 197.10500000000008,412" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="81.04000000000005,448 81.04000000000005,523 46.45500000000006,523" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="197.10500000000008,448 197.10500000000008,476.5 168.08500000000004,476.5 168.08500000000004,523 135.65500000000006,523" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="197.10500000000008,448 197.10500000000008,476.5 241.12500000000006,476.5 241.12500000000006,616 241.4875,616" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="91.05500000000006,541 91.05500000000006,616 130.83750000000003,616" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="186.16250000000002,598 186.16250000000002,569.5 362.47,569.5 362.47,58 353.5475,58" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="186.16250000000002,634 186.16250000000002,691" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="301.7975,76 301.7975,104.5 91.75,104.5 91.75,133" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="301.7975,76 301.7975,104.5 208.525,104.5 208.525,133" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="301.7975,76 301.7975,104.5 307.01,104.5 307.01,244 273,244" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="91.75,169 91.75,244 176.65,244" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="208.525,169 208.525,244 176.65,244" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="186.16250000000002,727 186.16250000000002,802 180.22500000000005,802" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="224.82500000000005,784 224.82500000000005,755.5 318.45000000000005,755.5 318.45000000000005,337 240.26500000000004,337" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<polyline points="224.82500000000002,262 224.82500000000002,337 240.26500000000004,337" fill="none" stroke="var(--_line)" stroke-width="0.75" marker-end="url(#arrowhead)" />
+<rect x="38.72000000000005" y="370" width="84.64" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="81.04000000000005" y="383.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">passive open</text>
+<rect x="157.64500000000007" y="370" width="78.92" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="197.10500000000008" y="383.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">active open</text>
+<rect x="53.02000000000005" y="463" width="56.04" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="81.04000000000005" y="476.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">rcv SYN</text>
+<rect x="140.06500000000003" y="463" width="56.04" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="168.08500000000004" y="476.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">rcv SYN</text>
+<rect x="201.66500000000005" y="509.5" width="78.92" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="241.12500000000006" y="523" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">rcv SYN+ACK</text>
+<rect x="63.03500000000007" y="556" width="56.04" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="91.05500000000006" y="569.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">rcv ACK</text>
+<rect x="340.17" y="323.5" width="44.6" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="362.47" y="337" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">close</text>
+<rect x="158.1425" y="649" width="56.04" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="186.16250000000002" y="662.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">rcv FIN</text>
+<rect x="63.730000000000004" y="91" width="56.04" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="91.75" y="104.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">rcv ACK</text>
+<rect x="180.505" y="91" width="56.04" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="208.525" y="104.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">rcv FIN</text>
+<rect x="267.55" y="137.5" width="78.92" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="307.01" y="151" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">rcv FIN+ACK</text>
+<rect x="63.730000000000004" y="184" width="56.04" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="91.75" y="197.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">rcv FIN</text>
+<rect x="180.505" y="184" width="56.04" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="208.525" y="197.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">rcv ACK</text>
+<rect x="163.8625" y="742" width="44.6" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="186.16250000000002" y="755.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">close</text>
+<rect x="290.43000000000006" y="556" width="56.04" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="318.45000000000005" y="569.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">rcv ACK</text>
+<rect x="196.805" y="277" width="56.04" height="27" rx="4" ry="4" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="0.5" />
+<text x="224.82500000000002" y="290.5" text-anchor="middle" dy="0.35em" font-size="11" font-weight="400" fill="var(--_text-muted)">timeout</text>
+<circle cx="122.65000000000002" cy="244" r="16" fill="var(--_text)" stroke="none" />
+<rect x="165.365" y="319" width="74.9" height="36" rx="6" ry="6" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="43.590000000000046" y="412" width="74.9" height="36" rx="6" ry="6" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="152.50500000000008" y="412" width="89.2" height="36" rx="6" ry="6" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="46.45500000000006" y="505" width="89.2" height="36" rx="6" ry="6" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="130.83750000000003" y="598" width="110.65" height="36" rx="6" ry="6" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="250.0475" y="40" width="103.5" height="36" rx="6" ry="6" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="134.41250000000002" y="691" width="103.5" height="36" rx="6" ry="6" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="40" y="133" width="103.5" height="36" rx="6" ry="6" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="167.5" y="133" width="82.05000000000001" height="36" rx="6" ry="6" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="176.65" y="226" width="96.35000000000001" height="36" rx="6" ry="6" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+<rect x="180.22500000000005" y="784" width="89.2" height="36" rx="6" ry="6" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+
+<text x="202.815" y="337" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">CLOSED</text>
+<text x="81.04000000000005" y="430" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">LISTEN</text>
+<text x="197.10500000000008" y="430" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">SYN_SENT</text>
+<text x="91.05500000000006" y="523" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">SYN_RCVD</text>
+<text x="186.16250000000002" y="616" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">ESTABLISHED</text>
+<text x="301.7975" y="58" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">FIN_WAIT_1</text>
+<text x="186.16250000000002" y="709" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">CLOSE_WAIT</text>
+<text x="91.75" y="151" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">FIN_WAIT_2</text>
+<text x="208.525" y="151" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">CLOSING</text>
+<text x="224.82500000000002" y="244" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">TIME_WAIT</text>
+<text x="224.82500000000005" y="802" text-anchor="middle" dy="0.35em" font-size="13" font-weight="500" fill="var(--_text)">LAST_ACK</text>
+</svg>

@@ -7,13 +7,13 @@
 /// - CSV output mode for plotting
 
 const std = @import("std");
-const ustack = @import("ustack");
-const stack = ustack.stack;
-const tcpip = ustack.tcpip;
-const buffer = ustack.buffer;
-const waiter = ustack.waiter;
-const AfPacket = ustack.drivers.af_packet.AfPacket;
-const EventMultiplexer = ustack.event_mux.EventMultiplexer;
+const shardnet = @import("shardnet");
+const stack = shardnet.stack;
+const tcpip = shardnet.tcpip;
+const buffer = shardnet.buffer;
+const waiter = shardnet.waiter;
+const AfPacket = shardnet.drivers.af_packet.AfPacket;
+const EventMultiplexer = shardnet.event_mux.EventMultiplexer;
 
 const c = @cImport({
     @cInclude("ev.h");
@@ -137,7 +137,7 @@ pub fn main() !void {
     g_config = try parseArgs(args);
 
     // Initialize stack (simplified)
-    var s = try ustack.init(allocator);
+    var s = try shardnet.init(allocator);
     defer s.deinit();
 
     std.debug.print("Ping-pong benchmark\n", .{});

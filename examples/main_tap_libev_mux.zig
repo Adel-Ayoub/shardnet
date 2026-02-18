@@ -1,9 +1,9 @@
 const std = @import("std");
-const ustack = @import("ustack");
-const stack = ustack.stack;
-const tcpip = ustack.tcpip;
-const waiter = ustack.waiter;
-const event_mux = ustack.event_mux;
+const shardnet = @import("shardnet");
+const stack = shardnet.stack;
+const tcpip = shardnet.tcpip;
+const waiter = shardnet.waiter;
+const event_mux = shardnet.event_mux;
 
 pub extern fn ioctl(fd: i32, request: u64, ...) i32;
 
@@ -41,7 +41,7 @@ pub extern fn my_set_if_addr(name: [*:0]const u8, addr: [*:0]const u8) i32;
 
 // Global variables for libev callbacks
 var global_stack: *stack.Stack = undefined;
-var global_tap: *ustack.drivers.tap.Tap = undefined;
+var global_tap: *shardnet.drivers.tap.Tap = undefined;
 var global_mux: *event_mux.EventMultiplexer = undefined;
 
 fn my_upcall(entry: *waiter.Entry) void {
@@ -97,8 +97,8 @@ fn libev_mux_cb(loop: ?*ev_loop, watcher: *ev_io, revents: i32) callconv(.C) voi
 }
 
 const HttpClient = struct {
-    ep: ustack.tcpip.Endpoint,
-    wait_entry: ustack.waiter.Entry,
+    ep: shardnet.tcpip.Endpoint,
+    wait_entry: shardnet.waiter.Entry,
     state: State = .initial,
     total_received: usize = 0,
     hostname: []const u8,
@@ -115,22 +115,22 @@ const HttpClient = struct {
     pub fn init(s: *stack.Stack, name: []const u8) !*HttpClient {
         const self = try s.allocator.create(HttpClient);
         const tcp_proto = s.transport_protocols.get(6).?;
-        const wq = try s.allocator.create(ustack.waiter.Queue);
+        const wq = try s.allocator.create(shardnet.waiter.Queue);
         wq.* = .{};
         self.* = .{
-            .ep = try tcp_proto.newEndpoint(s, ustack.network.ipv4.ProtocolNumber, wq),
-            .wait_entry = ustack.waiter.Entry.init(self, my_upcall),
+            .ep = try tcp_proto.newEndpoint(s, shardnet.network.ipv4.ProtocolNumber, wq),
+            .wait_entry = shardnet.waiter.Entry.init(self, my_upcall),
             .hostname = name,
             .allocator = s.allocator,
         };
-        wq.eventRegister(&self.wait_entry, ustack.waiter.EventIn | ustack.waiter.EventOut | ustack.waiter.EventErr);
+        wq.eventRegister(&self.wait_entry, shardnet.waiter.EventIn | shardnet.waiter.EventOut | shardnet.waiter.EventErr);
         return self;
     }
 
-    pub fn start(self: *HttpClient, ip: ustack.tcpip.Address) !void {
+    pub fn start(self: *HttpClient, ip: shardnet.tcpip.Address) !void {
         self.state = .connecting;
         std.debug.print("Connecting to {s} ({})\n", .{ self.hostname, ip });
-        // Use 10.0.0.2 for ustack endpoint
+        // Use 10.0.0.2 for shardnet endpoint
         try self.ep.bind(.{ .nic = 1, .addr = .{ .v4 = .{ 10, 0, 0, 2 } }, .port = 0 });
         self.ep.connect(.{ .nic = 0, .addr = ip, .port = 80 }) catch |err| {
             if (err != tcpip.Error.WouldBlock) return err;
@@ -140,7 +140,7 @@ const HttpClient = struct {
     pub fn onEvent(self: *HttpClient) !void {
         switch (self.state) {
             .connecting => {
-                const tcp_ep = @as(*ustack.transport.tcp.TCPEndpoint, @ptrCast(@alignCast(self.ep.ptr)));
+                const tcp_ep = @as(*shardnet.transport.tcp.TCPEndpoint, @ptrCast(@alignCast(self.ep.ptr)));
                 if (tcp_ep.state == .established) {
                     std.debug.print("Connected to {s}\n", .{self.hostname});
                     self.state = .sending;
@@ -189,7 +189,7 @@ const HttpClient = struct {
 
     fn sendRequest(self: *HttpClient) !void {
         var request_buf: [256]u8 = undefined;
-        const request = try std.fmt.bufPrint(&request_buf, "GET / HTTP/1.1\r\nHost: {s}\r\nUser-Agent: ustack/0.1\r\nConnection: close\r\n\r\n", .{self.hostname});
+        const request = try std.fmt.bufPrint(&request_buf, "GET / HTTP/1.1\r\nHost: {s}\r\nUser-Agent: shardnet/0.1\r\nConnection: close\r\n\r\n", .{self.hostname});
         const MyPayloader = struct {
             data: []const u8,
             pub fn payloader(ctx: *@This()) tcpip.Payloader {
@@ -207,25 +207,25 @@ const HttpClient = struct {
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
-    var s = try ustack.init(allocator);
+    var s = try shardnet.init(allocator);
     global_stack = &s;
 
-    var tap = try ustack.drivers.tap.Tap.init("tap_mux");
+    var tap = try shardnet.drivers.tap.Tap.init("tap_mux");
     global_tap = &tap;
 
     // Set interface UP and IP (Gateway) from program
     _ = my_set_if_up("tap_mux");
     _ = my_set_if_addr("tap_mux", "10.0.0.1"); // Gateway address
 
-    var eth_ep = ustack.link.eth.EthernetEndpoint.init(tap.linkEndpoint(), tap.address);
+    var eth_ep = shardnet.link.eth.EthernetEndpoint.init(tap.linkEndpoint(), tap.address);
     try s.createNIC(1, eth_ep.linkEndpoint());
     const nic = s.nics.get(1).?;
     try nic.addAddress(.{
-        .protocol = ustack.network.ipv4.ProtocolNumber,
-        .address_with_prefix = .{ .address = .{ .v4 = .{ 10, 0, 0, 2 } }, .prefix_len = 24 }, // ustack address
+        .protocol = shardnet.network.ipv4.ProtocolNumber,
+        .address_with_prefix = .{ .address = .{ .v4 = .{ 10, 0, 0, 2 } }, .prefix_len = 24 }, // shardnet address
     });
     try nic.addAddress(.{
-        .protocol = ustack.network.arp.ProtocolNumber,
+        .protocol = shardnet.network.arp.ProtocolNumber,
         .address_with_prefix = .{ .address = .{ .v4 = .{ 0, 0, 0, 0 } }, .prefix_len = 0 },
     });
     try s.addRoute(.{

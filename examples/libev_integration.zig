@@ -6,9 +6,9 @@
 /// - A watcher can be reused after stopping by calling ev_io_set/ev_timer_set
 
 const std = @import("std");
-const ustack = @import("ustack");
-const stack = ustack.stack;
-const tcpip = ustack.tcpip;
+const shardnet = @import("shardnet");
+const stack = shardnet.stack;
+const tcpip = shardnet.tcpip;
 
 const c = @cImport({
     @cInclude("ev.h");

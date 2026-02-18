@@ -1,10 +1,10 @@
 const std = @import("std");
-const ustack = @import("ustack");
-const stack = ustack.stack;
-const tcpip = ustack.tcpip;
-const waiter = ustack.waiter;
-const buffer = ustack.buffer;
-const header = ustack.header;
+const shardnet = @import("shardnet");
+const stack = shardnet.stack;
+const tcpip = shardnet.tcpip;
+const waiter = shardnet.waiter;
+const buffer = shardnet.buffer;
+const header = shardnet.header;
 
 pub extern fn ioctl(fd: i32, request: u64, ...) i32;
 
@@ -55,7 +55,7 @@ pub extern fn my_tuntap_init(fd: i32, name: [*:0]const u8) i32;
 
 // Global variables for libev callbacks
 var global_stack: *stack.Stack = undefined;
-var global_tap: *ustack.drivers.tap.Tap = undefined;
+var global_tap: *shardnet.drivers.tap.Tap = undefined;
 
 fn libev_io_cb(loop: ?*ev_loop, watcher: *ev_io, revents: i32) callconv(.C) void {
     _ = loop;
@@ -78,31 +78,31 @@ fn libev_timer_cb(loop: ?*ev_loop, watcher: *ev_timer, revents: i32) callconv(.C
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
-    var s = try ustack.init(allocator);
+    var s = try shardnet.init(allocator);
     global_stack = &s;
 
-    var tap = try ustack.drivers.tap.Tap.init("tap0");
+    var tap = try shardnet.drivers.tap.Tap.init("tap0");
     global_tap = &tap;
 
-    var eth_ep = ustack.link.eth.EthernetEndpoint.init(tap.linkEndpoint(), tap.address);
+    var eth_ep = shardnet.link.eth.EthernetEndpoint.init(tap.linkEndpoint(), tap.address);
     try s.createNIC(1, eth_ep.linkEndpoint());
 
     // Configure IP
     const nic = s.nics.get(1).?;
     try nic.addAddress(.{
-        .protocol = ustack.network.ipv4.ProtocolNumber,
+        .protocol = shardnet.network.ipv4.ProtocolNumber,
         .address_with_prefix = .{ .address = .{ .v4 = .{ 10, 0, 0, 2 } }, .prefix_len = 24 },
     });
     try nic.addAddress(.{
-        .protocol = ustack.network.arp.ProtocolNumber,
+        .protocol = shardnet.network.arp.ProtocolNumber,
         .address_with_prefix = .{ .address = .{ .v4 = .{ 0, 0, 0, 0 } }, .prefix_len = 0 },
     });
     try nic.addAddress(.{
-        .protocol = ustack.network.icmp.ProtocolNumber,
+        .protocol = shardnet.network.icmp.ProtocolNumber,
         .address_with_prefix = .{ .address = .{ .v4 = .{ 0, 0, 0, 0 } }, .prefix_len = 0 },
     });
     try nic.addAddress(.{
-        .protocol = ustack.network.ipv6.ProtocolNumber,
+        .protocol = shardnet.network.ipv6.ProtocolNumber,
         .address_with_prefix = .{ .address = .{ .v6 = [_]u8{ 0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2 } }, .prefix_len = 64 },
     });
 
@@ -148,19 +148,19 @@ fn doHttpClient(s: *stack.Stack) !void {
     // Resolve hostname via DNS
     std.debug.print("Resolving {s}...\n", .{hostname});
 
-    // Use ustack.dns resolver
-    const dns_server = ustack.tcpip.Address{ .v4 = .{ 8, 8, 8, 8 } };
-    var resolver = ustack.dns.Resolver.init(s, dns_server);
+    // Use shardnet.dns resolver
+    const dns_server = shardnet.tcpip.Address{ .v4 = .{ 8, 8, 8, 8 } };
+    var resolver = shardnet.dns.Resolver.init(s, dns_server);
 
     const google_ip = resolver.resolve(hostname) catch |err| blk: {
         std.debug.print("DNS resolution failed: {}\n", .{err});
         std.debug.print("Falling back to known IP 142.250.190.4 (www.google.com)\n", .{});
-        break :blk ustack.tcpip.Address{ .v4 = .{ 142, 250, 190, 4 } };
+        break :blk shardnet.tcpip.Address{ .v4 = .{ 142, 250, 190, 4 } };
     };
 
     var wq = waiter.Queue{};
     const tcp_proto = s.transport_protocols.get(6).?;
-    var ep = try tcp_proto.newEndpoint(s, ustack.network.ipv4.ProtocolNumber, &wq);
+    var ep = try tcp_proto.newEndpoint(s, shardnet.network.ipv4.ProtocolNumber, &wq);
     defer ep.close();
 
     try ep.setOption(.{ .ts_enabled = true });
@@ -189,7 +189,7 @@ fn doHttpClient(s: *stack.Stack) !void {
     }
 
     // Wait for connection to be established
-    const tcp_ep = @as(*ustack.transport.tcp.TCPEndpoint, @ptrCast(@alignCast(ep.ptr)));
+    const tcp_ep = @as(*shardnet.transport.tcp.TCPEndpoint, @ptrCast(@alignCast(ep.ptr)));
     var connect_timeout: usize = 0;
     while (tcp_ep.state != .established) {
         if (tcp_ep.state == .error_state or tcp_ep.state == .closed) return error.ConnectFailed;
@@ -202,7 +202,7 @@ fn doHttpClient(s: *stack.Stack) !void {
 
     // Construct HTTP request with proper Host header
     var request_buf: [256]u8 = undefined;
-    const request = try std.fmt.bufPrint(&request_buf, "GET / HTTP/1.1\r\nHost: {s}\r\nUser-Agent: ustack/0.1\r\nConnection: close\r\n\r\n", .{hostname});
+    const request = try std.fmt.bufPrint(&request_buf, "GET / HTTP/1.1\r\nHost: {s}\r\nUser-Agent: shardnet/0.1\r\nConnection: close\r\n\r\n", .{hostname});
 
     const MyPayloader = struct {
         data: []const u8,

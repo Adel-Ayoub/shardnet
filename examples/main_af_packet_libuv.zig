@@ -1,7 +1,7 @@
 const std = @import("std");
-const ustack = @import("ustack");
-const stack = ustack.stack;
-const tcpip = ustack.tcpip;
+const shardnet = @import("shardnet");
+const stack = shardnet.stack;
+const tcpip = shardnet.tcpip;
 const AfPacketEndpoint = @import("af_packet_adapter.zig").AfPacketEndpoint;
 
 // Mock UV

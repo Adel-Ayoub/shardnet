@@ -1,11 +1,11 @@
 const std = @import("std");
-const ustack = @import("ustack");
-const stack = ustack.stack;
-const tcpip = ustack.tcpip;
-const buffer = ustack.buffer;
-const waiter = ustack.waiter;
-const AfPacket = ustack.drivers.af_packet.AfPacket;
-const EventMultiplexer = ustack.event_mux.EventMultiplexer;
+const shardnet = @import("shardnet");
+const stack = shardnet.stack;
+const tcpip = shardnet.tcpip;
+const buffer = shardnet.buffer;
+const waiter = shardnet.waiter;
+const AfPacket = shardnet.drivers.af_packet.AfPacket;
+const EventMultiplexer = shardnet.event_mux.EventMultiplexer;
 
 const c = @cImport({
     @cInclude("ev.h");
@@ -13,7 +13,7 @@ const c = @cImport({
 
 var global_stack: stack.Stack = undefined;
 var global_af_packet: AfPacket = undefined;
-var global_eth: ustack.link.eth.EthernetEndpoint = undefined;
+var global_eth: shardnet.link.eth.EthernetEndpoint = undefined;
 var global_mux: ?*EventMultiplexer = null;
 var global_benchmark: Benchmark = undefined;
 
@@ -45,9 +45,9 @@ pub fn main() !void {
     const mode = args[2];
     const ip_cidr = args[3];
 
-    global_stack = try ustack.init(allocator);
+    global_stack = try shardnet.init(allocator);
     global_af_packet = try AfPacket.init(allocator, &global_stack.cluster_pool, ifname);
-    global_eth = ustack.link.eth.EthernetEndpoint.init(global_af_packet.linkEndpoint(), global_af_packet.address);
+    global_eth = shardnet.link.eth.EthernetEndpoint.init(global_af_packet.linkEndpoint(), global_af_packet.address);
     try global_stack.createNIC(1, global_eth.linkEndpoint());
 
     var parts = std.mem.split(u8, ip_cidr, "/");
@@ -240,7 +240,7 @@ const Benchmark = struct {
 };
 
 const HttpClient = struct {
-    ep: ustack.tcpip.Endpoint,
+    ep: shardnet.tcpip.Endpoint,
     wq: *waiter.Queue,
     allocator: std.mem.Allocator,
     app_entry: AppEntry,
@@ -274,7 +274,7 @@ const HttpClient = struct {
     }
 
     fn onEvent(self: *HttpClient) void {
-        const tcp_ep = @as(*ustack.transport.tcp.TCPEndpoint, @ptrCast(@alignCast(self.ep.ptr)));
+        const tcp_ep = @as(*shardnet.transport.tcp.TCPEndpoint, @ptrCast(@alignCast(self.ep.ptr)));
         while (true) {
             const current_state = self.state;
             switch (self.state) {
@@ -346,7 +346,7 @@ const HttpClient = struct {
 };
 
 const HttpServer = struct {
-    listener: ustack.tcpip.Endpoint,
+    listener: shardnet.tcpip.Endpoint,
     allocator: std.mem.Allocator,
     mux: *EventMultiplexer,
     app_entry: AppEntry,
@@ -399,13 +399,13 @@ const HttpServer = struct {
 };
 
 const Connection = struct {
-    ep: ustack.tcpip.Endpoint,
+    ep: shardnet.tcpip.Endpoint,
     wq: *waiter.Queue,
     allocator: std.mem.Allocator,
     app_entry: AppEntry,
     server_ref: *HttpServer,
 
-    pub fn init(allocator: std.mem.Allocator, ep: ustack.tcpip.Endpoint, wq: *waiter.Queue, mux: *EventMultiplexer, server: *HttpServer) !*Connection {
+    pub fn init(allocator: std.mem.Allocator, ep: shardnet.tcpip.Endpoint, wq: *waiter.Queue, mux: *EventMultiplexer, server: *HttpServer) !*Connection {
         const self = try allocator.create(Connection);
         self.* = .{
             .ep = ep,

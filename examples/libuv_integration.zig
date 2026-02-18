@@ -7,9 +7,9 @@
 /// - Poll handles must be stopped before the fd is closed
 
 const std = @import("std");
-const ustack = @import("ustack");
-const stack = ustack.stack;
-const tcpip = ustack.tcpip;
+const shardnet = @import("shardnet");
+const stack = shardnet.stack;
+const tcpip = shardnet.tcpip;
 
 // Mocking UV structs for syntax checking
 const uv_loop_t = opaque {};

@@ -4,7 +4,7 @@
  * Makefile snippet (pkg-config compatible):
  *
  *   CFLAGS  = -I$(SHARDNET_ROOT)/include -Wall -Wextra
- *   LDFLAGS = -L$(SHARDNET_ROOT)/lib -lustack -lev
+ *   LDFLAGS = -L$(SHARDNET_ROOT)/lib -lshardnet -lev
  *
  *   %.o: %.c
  *       $(CC) $(CFLAGS) -c $< -o $@

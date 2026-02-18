@@ -1,6 +1,17 @@
+<div align="center">
+
 # Shardnet
 
-## A high-performance userspace TCP/IP stack written in Zig.
+**A high-performance userspace TCP/IP stack written in Zig**
+
+![Architecture](assets/architecture.svg)
+
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Zig](https://img.shields.io/badge/zig-0.11+-orange.svg)](https://ziglang.org)
+
+</div>
+
+---
 
 ## Installation
 
@@ -25,28 +36,35 @@ zig build example
 
 ### Network Stack Layers
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Application                             │
-├─────────────────────────────────────────────────────────────┤
-│                    Socket API (POSIX)                        │
-├─────────────────────────────────────────────────────────────┤
-│           Transport Layer (TCP / UDP / ICMPv6)               │
-├─────────────────────────────────────────────────────────────┤
-│           Network Layer (IPv4 / IPv6 / ICMP / ARP)           │
-├─────────────────────────────────────────────────────────────┤
-│                   Link Layer (Ethernet)                      │
-├─────────────────────────────────────────────────────────────┤
-│     Drivers (TAP / AF_PACKET / AF_XDP / Loopback)            │
-└─────────────────────────────────────────────────────────────┘
-```
+<div align="center">
+
+![Network Stack Architecture](assets/architecture.svg)
+
+</div>
 
 ### Packet Flow
 
-```
-Ingress:  Driver → Ethernet → IPv4/IPv6 → TCP/UDP → Application
-Egress:   Application → TCP/UDP → IPv4/IPv6 → Ethernet → Driver
-```
+<div align="center">
+
+![Packet Flow](assets/packet-flow.svg)
+
+</div>
+
+### TCP State Machine
+
+<div align="center">
+
+![TCP State Machine](assets/tcp-states.svg)
+
+</div>
+
+### Congestion Control
+
+<div align="center">
+
+![Congestion Control](assets/congestion-control.svg)
+
+</div>
 
 ---
 
@@ -133,7 +151,7 @@ Egress:   Application → TCP/UDP → IPv4/IPv6 → Ethernet → Driver
 
 ```zig
 const std = @import("std");
-const ustack = @import("ustack");
+const shardnet = @import("shardnet");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -141,16 +159,16 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     // Initialize stack
-    var stack = try ustack.init(allocator);
+    var stack = try shardnet.init(allocator);
     defer stack.deinit();
 
     // Create NIC with TAP driver
-    const tap = try ustack.drivers.tap.Tap.init("tap0");
+    const tap = try shardnet.drivers.tap.Tap.init("tap0");
     try stack.createNIC(1, tap.endpoint());
 
     // Add IP address
     try stack.nics.get(1).?.addAddress(.{
-        .protocol = ustack.tcpip.EtherType.IPv4,
+        .protocol = shardnet.tcpip.EtherType.IPv4,
         .address_with_prefix = .{
             .address = .{ .v4 = .{ 10, 0, 0, 1 } },
             .prefix = 24,
@@ -166,10 +184,10 @@ pub fn main() !void {
 
 ```zig
 // Create TCP socket
-var wq = ustack.waiter.Queue{};
+var wq = shardnet.waiter.Queue{};
 var endpoint = try stack.transport_protocols.get(6).?.newEndpoint(
     &stack,
-    ustack.tcpip.EtherType.IPv4,
+    shardnet.tcpip.EtherType.IPv4,
     &wq,
 );
 
